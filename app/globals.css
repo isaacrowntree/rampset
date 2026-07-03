@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+/* ————— LiftLog design tokens: the palette is the plates (IWF) ————— */
+:root {
+  --plate-25: #e8433f;
+  --plate-20: #3d6dff;
+  --plate-15: #f2c21b;
+  --plate-10: #34c979;
+  --plate-5: #eaeaea;
+
+  --oled: #000000;
+  --surface: #131417;
+  --surface-2: #1c1d22;
+  --line: #26272d;
+  --ink: #f2f3f5;
+  --ink-dim: #9aa0ab;
+  --ink-faint: #5c6069;
+
+  /* Per-user accent, set on <body data-accent>. */
+  --accent: var(--plate-20);
+  --accent-soft: rgba(61, 109, 255, 0.14);
+  --accent-glow: rgba(61, 109, 255, 0.35);
+}
+
+body[data-accent="green"] {
+  --accent: var(--plate-10);
+  --accent-soft: rgba(52, 201, 121, 0.13);
+  --accent-glow: rgba(52, 201, 121, 0.35);
+}
+
+@theme inline {
+  --color-oled: var(--oled);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-faint: var(--ink-faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-plate-25: var(--plate-25);
+  --color-plate-20: var(--plate-20);
+  --color-plate-15: var(--plate-15);
+  --color-plate-10: var(--plate-10);
+  --font-disp: var(--font-archivo);
+  --font-body: var(--font-lexend);
+  --font-mono: var(--font-plex-mono);
+}
+
+html {
+  background: var(--oled);
+}
+
+body {
+  background: var(--oled);
+  color: var(--ink);
+  font-family: var(--font-lexend), sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Big display numbers — Archivo expanded heavy. */
+.disp {
+  font-family: var(--font-archivo), sans-serif;
+  font-weight: 800;
+  font-stretch: 112%;
+  letter-spacing: 0.01em;
+}
+
+.mono {
+  font-family: var(--font-plex-mono), monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Numeric inputs in set rows: quiet until touched. */
+input.setfield {
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--ink);
+  text-align: center;
+  width: 100%;
+  padding: 8px 0;
+  font-family: var(--font-plex-mono), monospace;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+input.setfield:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+input.setfield::placeholder {
+  color: var(--ink-faint);
+}
+/* hide number spinners */
+input.setfield::-webkit-outer-spin-button,
+input.setfield::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.setfield[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
