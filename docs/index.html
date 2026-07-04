@@ -81,6 +81,21 @@
   .val .d{font-size:13.5px;color:var(--ink-dim)}
   .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
 
+  /* three ways to train */
+  section.modes-sec{padding:16px 0 40px}
+  .modes-h{font-size:clamp(24px,4vw,34px);margin:12px 0 26px}
+  .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media(max-width:860px){.modes{grid-template-columns:1fr}}
+  .mode{padding:22px 22px 24px;border-top:3px solid var(--m)}
+  .mode .tag{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--m);font-weight:600}
+  .mode h3{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif;font-weight:750;
+    font-size:19px;letter-spacing:-.01em;margin:8px 0 0}
+  .mode p{color:var(--ink-dim);font-size:14.5px;margin:10px 0 0;line-height:1.5}
+  ul.mticks{list-style:none;padding:0;margin:14px 0 0;font-size:13.5px;color:var(--ink-dim)}
+  ul.mticks li{display:flex;gap:9px;padding:4px 0}
+  ul.mticks li::before{content:"";flex:0 0 auto;width:6px;height:6px;border-radius:2px;background:var(--m);margin-top:7px}
+
   /* feature rows */
   section.feat{padding:56px 0;border-top:1px solid var(--line)}
   .frow{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
@@ -173,6 +188,43 @@
     <div class="val glass"><span class="dot" style="background:var(--red)"></span><div class="k">Real training, built in</div><div class="d">Guided 5×5 and Madcow with auto weight jumps, deloads, plate math, warm-up ramps, and PR tracking — offline.</div></div>
   </div>
 </div>
+
+<section class="modes-sec"><div class="wrap">
+  <span class="eyebrow">Three ways to train</span>
+  <h2 class="disp modes-h">Run a proven program, or do your own thing.</h2>
+  <div class="modes">
+    <div class="mode glass" style="--m:var(--accent)">
+      <span class="tag">StrongLifts 5×5</span>
+      <h3>Guided linear progression</h3>
+      <p>The classic beginner program. Squat every session, alternating Workout A/B, +2.5&nbsp;kg every time you hit all your reps, and an automatic deload when you stall.</p>
+      <ul class="mticks">
+        <li>Tap-cycle plate circles + per-side plate math</li>
+        <li>Warm-up ramps and empty-bar sets built in</li>
+        <li>Variants: Plus, Lite, Mini, Ultra, Ultra&nbsp;Max</li>
+      </ul>
+    </div>
+    <div class="mode glass" style="--m:var(--gold)">
+      <span class="tag">Madcow 5×5</span>
+      <h3>Weekly ramp, for intermediates</h3>
+      <p>Where you go when linear stalls. Sets ramp to a top each day, a Friday PR set sets next week's weight, with heavy / light / intensity days and back-off volume.</p>
+      <ul class="mticks">
+        <li>Prescribed ramp checklist, top set called out</li>
+        <li>Progresses weekly, not every workout</li>
+        <li>One shared top per lift across the week</li>
+      </ul>
+    </div>
+    <div class="mode glass" style="--m:var(--green)">
+      <span class="tag">Freeform routine</span>
+      <h3>Strong-style, your rules</h3>
+      <p>For everything else. Set rows — weight × reps — with every set prefilled from last time. Timed holds and bodyweight sets, per-exercise rest. Nothing is prescribed; you drive.</p>
+      <ul class="mticks">
+        <li>Accessory, glute, mobility — any split you invent</li>
+        <li>Add exercises and sets on the fly</li>
+        <li>Remembers what you did last time</li>
+      </ul>
+    </div>
+  </div>
+</div></section>
 
 <div id="features">
 <section class="feat"><div class="wrap"><div class="frow">
