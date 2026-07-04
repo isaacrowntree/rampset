@@ -267,7 +267,8 @@
       <li><b>Fork &amp; clone</b> the repo, then <span class="mono" style="color:var(--ink-dim)">npm install</span>.</li>
       <li><b>Add your lifters.</b> <span class="m">Copy <span class="mono">.env.example</span> → <span class="mono">.env.local</span> and set names, units, and starting weights. No personal data lives in the repo.</span></li>
       <li><b>Deploy to Cloudflare Workers.</b> <span class="m">One command via the OpenNext adapter. Free tier is plenty for a few users.</span></li>
-      <li><b>Put Cloudflare Access in front.</b> <span class="m">A free zero-trust login (email code or Google) so only your people get in — that’s your auth, no passwords to manage.</span></li>
+      <li><b>Put Cloudflare Access in front.</b> <span class="m">A free zero-trust login (email code or Google, free up to 50 users) so only your people get in — that’s your auth, no passwords to manage. Each profile is keyed to the signed-in email.</span></li>
+      <li><b>Cloud backups (optional).</b> <span class="m">Bind an R2 bucket as <span class="mono">BACKUPS</span>. Backups sit inside R2’s 10&nbsp;GB free tier, though enabling R2 needs a card on file (still $0 under the limits). Rather not? Skip it — the app is fully offline on local storage, and <span class="mono">Settings → Export</span> gives you a CSV backup anytime.</span></li>
     </ol>
     <div class="term" role="img" aria-label="Terminal showing the setup commands">
       <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>

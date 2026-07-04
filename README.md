@@ -58,7 +58,7 @@ npm run dev                    # → http://localhost:3000
 npm test                       # vitest — the engines, importers, store, components
 ```
 
-## Self-host on Cloudflare (free)
+## Self-host on Cloudflare
 
 Rampset deploys to Cloudflare Workers via the OpenNext adapter, and uses
 **Cloudflare Access** (a free zero-trust login) as its auth — so only the emails
@@ -74,9 +74,17 @@ Then, once deployed:
    placeholder) or export `CLOUDFLARE_ACCOUNT_ID`.
 2. In the Cloudflare dashboard, add an **Access** application in front of your
    Worker's URL and allow your lifters' emails (email one-time-code or Google).
-3. Optional: create an R2 bucket for cloud backups and bind it as `BACKUPS`.
+   That's your login — each profile is keyed to the authenticated Access email.
+3. Create the **R2 bucket** the `BACKUPS` binding points at (for cloud backups).
 
-The free tier is plenty for a household.
+**What it costs:** Workers and Cloudflare Access are free for a household
+(Access is free up to 50 users), and there's no KV/cache to configure. The one
+paid gate is **R2** — the app's backups sit comfortably inside R2's 10 GB free
+tier, but Cloudflare requires a **payment method on file to enable R2** (you
+won't be charged under the free limits). Prefer no card at all? Remove the
+`BACKUPS` R2 binding from `wrangler.jsonc` — the app is fully offline-first on
+local IndexedDB and **Settings → Export** gives you a complete CSV backup
+whenever you want.
 
 ## Configuration — no personal data in the repo
 
@@ -90,7 +98,7 @@ templates. Switch lifters with the avatar in the header (or Settings → Account
 
 - **Next.js 16 App Router**, all screens client components.
 - **IndexedDB (Dexie)** is the on-device source of truth — fully functional
-  offline. Optional cloud sync/backups via Cloudflare Workers + R2.
+  offline. Optional cloud backups via Cloudflare Workers + R2.
 - **Engines** are pure, unit-tested functions in `src/lib/`: linear progression
   + deload, Madcow ramps, routine prefill, plate-per-side math, Epley e1RM,
   PR detection. Editing them is the point — start there.
