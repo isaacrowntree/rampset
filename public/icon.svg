@@ -1,17 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="112" fill="#000000"/>
-  <!-- ascending ramp: five sets climbing to the top set -->
-  <svg x="96" y="96" width="320" height="320" viewBox="0 0 64 64" preserveAspectRatio="xMidYMid meet">
-    <defs>
-      <linearGradient id="rs-top" x1="54" y1="56" x2="62" y2="10" gradientUnits="userSpaceOnUse">
-        <stop offset="0" stop-color="#5b7bff"/>
-        <stop offset="1" stop-color="#3d6dff"/>
-      </linearGradient>
-    </defs>
-    <rect x="4"  y="46" width="8" height="12" rx="3" fill="#2b2e35"/>
-    <rect x="16" y="38" width="8" height="20" rx="3" fill="#3a4152"/>
-    <rect x="28" y="30" width="8" height="28" rx="3" fill="#465575"/>
-    <rect x="40" y="21" width="8" height="37" rx="3" fill="#3d6dff" opacity="0.82"/>
-    <rect x="52" y="10" width="8" height="48" rx="3" fill="url(#rs-top)"/>
-  </svg>
+  <!-- weight plate: blue ring with centre bore -->
+  <circle cx="256" cy="256" r="176" fill="none" stroke="#3D6DFF" stroke-width="52"/>
+  <circle cx="256" cy="256" r="40" fill="none" stroke="#3D6DFF" stroke-width="18"/>
 </svg>

@@ -2,7 +2,7 @@
  * cache-first for static assets. The data layer lives in IndexedDB, so the
  * shell is all we need to make the app open in a gym dead zone. */
 
-const CACHE = "rampset-shell-v4";
+const CACHE = "rampset-shell-v5";
 const PRECACHE = ["/", "/manifest.webmanifest", "/icon.svg"];
 
 /** Gym dead zones don't fail fetches — they hang them. Anything
