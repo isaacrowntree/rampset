@@ -77,6 +77,11 @@ export function Sheet({
       document.removeEventListener("keydown", onKey);
       // Closed by button/backdrop/swipe: consume the entry we pushed.
       // Navigating away instead: the router already overwrote it.
+      //
+      // Reading .current at teardown is the entire point — the caller sets it
+      // between mount and unmount — so the usual "copy it into the effect"
+      // advice would reinstate the bug.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       if (!closedByPop.current && !keepHistoryOnUnmount?.current) {
         window.history.back();
       }

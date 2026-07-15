@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { syncNow, resetSyncEngine, MIN_INTERVAL_MS } from "./syncEngine";
+import {
+  syncNow,
+  resetSyncEngine,
+  readSyncState,
+  subscribeSyncState,
+  MIN_INTERVAL_MS,
+} from "./syncEngine";
 import type { Workout } from "@/lib/types";
 
 const USER1 = "user-1";
@@ -7,14 +13,15 @@ const EMAIL = "user1@example.com";
 
 function deps(over: Partial<Parameters<typeof syncNow>[2]> = {}) {
   return {
-    flush: vi.fn(async () => {}),
-    pull: vi.fn(async () => 1),
+    flush: vi.fn(async () => ({ ok: true })),
+    pull: vi.fn(async () => ({ ok: true, applied: 1 })),
     activeWorkout: vi.fn(async (): Promise<Workout | undefined> => undefined),
     ...over,
   };
 }
 
 beforeEach(() => {
+  localStorage.clear(); // before the reset — it reloads the snapshot from here
   resetSyncEngine();
 });
 
@@ -39,6 +46,19 @@ describe("syncNow", () => {
     const applied = await syncNow(USER1, EMAIL, d);
 
     expect(d.flush).toHaveBeenCalledOnce();
+    expect(d.pull).not.toHaveBeenCalled();
+    expect(applied).toBe(0);
+  });
+
+  // The journal is keyed by the Access session but the ops carry the selected
+  // avatar's rows, and the log is append-only — so one tap on the switcher
+  // would file someone else's workouts in your journal forever.
+  it("refuses to sync an avatar that isn't the signed-in identity", async () => {
+    const d = deps({ mayWrite: () => false });
+
+    const applied = await syncNow(USER1, EMAIL, d);
+
+    expect(d.flush).not.toHaveBeenCalled();
     expect(d.pull).not.toHaveBeenCalled();
     expect(applied).toBe(0);
   });
@@ -70,5 +90,71 @@ describe("syncNow", () => {
     t += MIN_INTERVAL_MS + 1;
     await syncNow(USER1, EMAIL, d);
     expect(d.flush).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** Every failure path used to be swallowed, so "synced" and "silently broken
+ * for a week" looked identical. The status row is only worth having if it
+ * cannot claim success it didn't have. */
+describe("sync status", () => {
+  it("records when the journal was last reached", async () => {
+    const d = deps({ now: () => 1_700_000 });
+    await syncNow(USER1, EMAIL, d);
+    expect(readSyncState().lastOkAt).toBe(1_700_000);
+    expect(readSyncState().lastError).toBeUndefined();
+  });
+
+  it("does not claim success when the push failed", async () => {
+    const d = deps({ flush: vi.fn(async () => ({ ok: false })) });
+    await syncNow(USER1, EMAIL, d);
+    expect(readSyncState().lastOkAt).toBeUndefined();
+    expect(readSyncState().lastError).toBeTruthy();
+  });
+
+  it("does not claim success when the pull failed", async () => {
+    const d = deps({ pull: vi.fn(async () => ({ ok: false, applied: 0 })) });
+    await syncNow(USER1, EMAIL, d);
+    expect(readSyncState().lastOkAt).toBeUndefined();
+    expect(readSyncState().lastError).toBeTruthy();
+  });
+
+  it("keeps the last good time when a later attempt fails", async () => {
+    let t = 1_700_000;
+    await syncNow(USER1, EMAIL, deps({ now: () => t }));
+    t += MIN_INTERVAL_MS + 1;
+    await syncNow(USER1, EMAIL, deps({ now: () => t, pull: vi.fn(async () => ({ ok: false, applied: 0 })) }));
+
+    const s = readSyncState();
+    expect(s.lastOkAt).toBe(1_700_000); // still true — it DID sync then
+    expect(s.lastError).toBeTruthy();
+  });
+});
+
+/** The Settings row reads this through useSyncExternalStore, which demands a
+ * referentially-stable snapshot between changes — return a fresh object each
+ * call and React re-renders forever. */
+describe("sync state as an external store", () => {
+  it("returns a stable snapshot reference until something changes", async () => {
+    const a = readSyncState();
+    expect(readSyncState()).toBe(a);
+
+    await syncNow(USER1, EMAIL, deps({ now: () => 1_700_000 }));
+
+    const b = readSyncState();
+    expect(b).not.toBe(a);
+    expect(readSyncState()).toBe(b);
+  });
+
+  it("notifies subscribers when a sync lands, and stops after unsubscribe", async () => {
+    const seen = vi.fn();
+    const unsubscribe = subscribeSyncState(seen);
+
+    await syncNow(USER1, EMAIL, deps({ now: () => 1_700_000 }));
+    expect(seen).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+    resetSyncEngine();
+    await syncNow(USER1, EMAIL, deps({ now: () => 1_800_000 }));
+    expect(seen).toHaveBeenCalledTimes(1);
   });
 });
