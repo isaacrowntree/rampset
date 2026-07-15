@@ -167,8 +167,12 @@ export default function HomePage() {
             key={`${day.id}-${i}`}
             day={day}
             rows={detail.get(day.id) ?? []}
-            // While a workout runs, day cards are preview-only: tapping one
-            // would silently close out the in-progress workout.
+            // Any day can be started, not just the suggested one — otherwise
+            // the only route to Workout B is finishing Workout A, which is
+            // what drives people to log a junk set just to move the program on.
+            // While a workout runs, cards go preview-only: tapping one would
+            // silently close out the in-progress workout.
+            startable={!active}
             highlight={i === 0 && !active}
             when={i === 0 ? "next" : "later"}
           />
@@ -198,11 +202,16 @@ export default function HomePage() {
 function DayCard({
   day,
   rows,
+  startable,
   highlight,
   when,
 }: {
   day: ProgramDay;
   rows: { pe: ProgramExercise; ex: Exercise }[];
+  /** Tapping starts this day. Separate from `highlight`: the program
+   * SUGGESTS an order, it doesn't impose one — any day can be started. */
+  startable: boolean;
+  /** Visual emphasis for the day the program suggests next. */
   highlight: boolean;
   when: string;
 }) {
@@ -230,15 +239,16 @@ function DayCard({
     </>
   );
 
-  return highlight ? (
-    <Link
-      href={`/workout?day=${day.id}`}
-      className="glass p-4 transition-colors active:border-accent"
-    >
+  const className = `glass p-4${highlight ? "" : " opacity-80"}${
+    startable ? " transition-colors active:border-accent" : ""
+  }`;
+
+  return startable ? (
+    <Link href={`/workout?day=${day.id}`} className={className}>
       {inner}
     </Link>
   ) : (
-    <div className="glass p-4 opacity-80">{inner}</div>
+    <div className={className}>{inner}</div>
   );
 }
 
