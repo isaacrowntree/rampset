@@ -75,8 +75,13 @@ describe("progression success with extra back-off sets", () => {
 });
 
 /* Finding: fail streaks never accumulate for exercises trained on multiple days */
-describe("deload counting is scoped to the program day", () => {
+/** Only meaningful for a program that opts OUT of linking: two slots of the
+ * same lift climbing independent ladders. With linking on (the StrongLifts
+ * default) A and B are one ladder at one weight, so an interleaved success
+ * legitimately resets the fail streak — see "deloads a linked lift" below. */
+describe("deload counting is scoped to the program day (unlinked programs)", () => {
   it("deloads day-B squat after three same-weight fails despite interleaved day-A squats", async () => {
+    await db.programs.update("program-5x5-user-1", { linkedProgression: false });
     const dayA = await db.programDays.get("day-5x5-a-user-1");
     const dayB = await db.programDays.get("day-5x5-b-user-1");
 
@@ -103,6 +108,26 @@ describe("deload counting is scoped to the program day", () => {
     const squatPe = pes.find((pe) => pe.restSeconds === undefined && pe.sets === 5 && pe.position === 0)!;
     // three fails at 27.5 → deload 10% → floor to 2.5 step = 24.72 → wait: 27.5*0.9=24.75 → 22.5? floor(24.75/2.5)=9 → 22.5... 9*2.5=22.5
     expect(squatPe.workingWeightKg).toBe(22.5);
+  });
+
+  it("deloads a linked lift after three consecutive fails ACROSS days", async () => {
+    // Squat is one ladder, so its fail streak spans A and B.
+    for (const dayId of ["day-5x5-b-user-1", "day-5x5-a-user-1", "day-5x5-b-user-1"]) {
+      const s = await startWorkout(USER1, dayId);
+      const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+      const at = squat.targets[0]!.weightKg!;
+      for (let i = 0; i < squat.programExercise.sets; i++) {
+        await logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: at, reps: 3 });
+      }
+      await finishWorkout(s.workout.id);
+    }
+
+    const slot = async (d: string) =>
+      (await db.programExercises.where({ programDayId: d }).sortBy("position"))[0];
+    // 27.5 → three fails → 10% off, floored to the 2.5 step → 22.5
+    expect((await slot("day-5x5-b-user-1")).workingWeightKg).toBe(22.5);
+    // ...and the other day's slot follows: one lift, one ladder.
+    expect((await slot("day-5x5-a-user-1")).workingWeightKg).toBe(22.5);
   });
 });
 
@@ -237,8 +262,28 @@ describe("startWorkout stamps the last known body weight", () => {
   });
 });
 
-/* Roadmap: linked progression (written 5×5 — squat is ONE chain) */
-describe("linked progression (opt-in per program)", () => {
+/** StrongLifts trains one lift across several days — squat every session on
+ * A/B — and that is ONE ladder, not one per day. The engine derives this from
+ * the program's mode rather than a flag someone has to remember to set:
+ * leaving it off makes the slots drift apart at half speed, which lifters
+ * then hand-sync (and, when they can't, fake a workout to force). Madcow has
+ * always linked unconditionally — see advanceMadcowTops. */
+describe("linked progression", () => {
+  it("links a lift across days for a StrongLifts program, with no flag set", async () => {
+    const dayB = await db.programDays.get("day-5x5-b-user-1");
+    const s = await startWorkout(USER1, dayB!.id);
+    const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+    for (let i = 0; i < 5; i++) {
+      await logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: 20, reps: 5 });
+    }
+    await finishWorkout(s.workout.id);
+
+    const aSlot = (await db.programExercises.where({ programDayId: "day-5x5-a-user-1" }).sortBy("position"))[0];
+    const bSlot = (await db.programExercises.where({ programDayId: "day-5x5-b-user-1" }).sortBy("position"))[0];
+    expect(bSlot.workingWeightKg).toBe(22.5);
+    expect(aSlot.workingWeightKg).toBe(22.5); // day A's squat follows day B's session
+  });
+
   it("a success advances every slot of the exercise across days", async () => {
     await db.programs.update("program-5x5-user-1", { linkedProgression: true });
     const dayB = await db.programDays.get("day-5x5-b-user-1");
@@ -255,7 +300,8 @@ describe("linked progression (opt-in per program)", () => {
     expect(aSlot.workingWeightKg).toBe(30); // linked: day A follows
   });
 
-  it("stays per-slot when the flag is off (default)", async () => {
+  it("stays per-slot when a program explicitly opts out", async () => {
+    await db.programs.update("program-5x5-user-1", { linkedProgression: false });
     const dayB = await db.programDays.get("day-5x5-b-user-1");
     const s = await startWorkout(USER1, dayB!.id);
     const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;

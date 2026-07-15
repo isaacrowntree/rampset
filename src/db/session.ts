@@ -318,6 +318,12 @@ export async function finishWorkout(workoutId: string): Promise<void> {
     .where({ programDayId: workout.programDayId })
     .toArray();
 
+  const linked = program.linkedProgression ?? program.mode === "progression";
+  const programDayIds = (
+    await db.programDays.where({ programId: program.id }).toArray()
+  ).map((d) => d.id);
+  const historyDayIds = linked ? programDayIds : [workout.programDayId];
+
   for (const pe of pes) {
     if (pe.workingWeightKg === undefined || !pe.incrementKg) continue;
     const workSets = sets.filter((s) => s.exerciseId === pe.exerciseId && !s.isWarmup);
@@ -329,7 +335,7 @@ export async function finishWorkout(workoutId: string): Promise<void> {
         deloadPct: pe.deloadPct ?? 0.1,
         deloadAfterFails: pe.deloadAfterFails ?? 3,
       },
-      await sessionHistory(pe, workout.programDayId),
+      await sessionHistory(pe, historyDayIds),
     );
     if (next === undefined) continue;
 
@@ -349,13 +355,17 @@ export async function finishWorkout(workoutId: string): Promise<void> {
 
     // Linked progression: one chain per exercise — every slot of this
     // exercise in the program follows the new weight.
-    if (program.linkedProgression) {
-      const dayIds = (await db.programDays.where({ programId: program.id }).toArray()).map(
-        (d) => d.id,
-      );
+    //
+    // The PROGRAM decides this, not a per-program preference: StrongLifts
+    // trains squat every session across A/B, and that is ONE ladder. Left
+    // unlinked, the slots drift into two ladders climbing at half speed, and
+    // the lifter hand-syncs them — or logs a junk set to force the one that's
+    // behind. Madcow already links unconditionally (advanceMadcowTops). An
+    // explicit flag can still opt out.
+    if (linked) {
       const siblings = await db.programExercises
         .where("programDayId")
-        .anyOf(dayIds)
+        .anyOf(programDayIds)
         .and((s) => s.exerciseId === pe.exerciseId && s.id !== pe.id)
         .toArray();
       for (const sib of siblings) {
@@ -409,11 +419,16 @@ async function advanceMadcowTops(
  * Each session's weight is its top work-set weight. */
 async function sessionHistory(
   pe: ProgramExercise,
-  programDayId: string,
+  programDayIds: string[],
 ): Promise<{ weightKg: number; success: boolean }[]> {
+  // One day for a per-slot ladder; every day of the program for a linked one.
+  // These must agree with how the weight is written: reading one day's history
+  // while linking writes across days makes the computed next weight disagree
+  // with the stored one, and the deload check (next < workingWeightKg) fires
+  // on lifts that never failed.
   const dayWorkouts = await db.workouts
     .where("programDayId")
-    .equals(programDayId)
+    .anyOf(programDayIds)
     .toArray();
   const workoutTs = new Map(dayWorkouts.map((w) => [w.id, w.startTs ?? 0]));
 
