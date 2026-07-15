@@ -14,6 +14,7 @@ import { ConfirmSheet } from "@/components/ConfirmSheet";
 import { PROGRAM_TEMPLATES, getTemplate } from "@/lib/programTemplates";
 import { switchProgram } from "@/db/programSwitch";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
+import { SyncStatusRow } from "@/components/SyncStatusRow";
 
 export default function SettingsPage() {
   const { user, users, switchUser } = useUser();
@@ -260,6 +261,8 @@ export default function SettingsPage() {
           </div>
           <span className="mono text-accent">↓</span>
         </button>
+
+        <SyncStatusRow />
 
         <button
           onClick={async () => {

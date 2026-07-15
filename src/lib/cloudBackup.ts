@@ -4,6 +4,7 @@
  * signal, so callers treat failures as "will back up next time online". */
 
 import { exportBackup, restoreBackup, type RestoreSummary } from "@/db/backup";
+import { mayWriteAs } from "@/lib/identityGate";
 
 function devHeaders(email: string): HeadersInit {
   // Behind Cloudflare Access the identity header is injected by the edge;
@@ -17,6 +18,12 @@ export async function backupToCloud(
   userId: string,
   email: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  // The route files this under the Access identity, not this avatar — so
+  // backing up while switched to someone else would overwrite THEIR snapshot
+  // with our database, or ours with theirs.
+  if (!mayWriteAs(email)) {
+    return { ok: false, error: "Not signed in as this user — skipping backup" };
+  }
   try {
     const json = await exportBackup(userId);
     const res = await fetch("/api/backup", {

@@ -117,7 +117,7 @@ describe("pull and apply", () => {
     vi.stubGlobal("fetch", vi.fn(async () =>
       new Response(JSON.stringify({ ops: [{ ...op, seq: 1 }], seq: 1 }), { status: 200 }),
     ));
-    const applied = await pullAndApply(USER1, "lifter-one@example.com");
+    const { applied } = await pullAndApply(USER1, "lifter-one@example.com");
     expect(applied).toBe(1);
     expect(await db.workouts.get(workoutId)).toBeDefined();
     expect(await db.sets.where({ workoutId }).count()).toBe(5);
@@ -155,7 +155,7 @@ describe("pull and apply", () => {
       ),
     ));
 
-    const applied = await pullAndApply(USER1, "lifter-one@example.com");
+    const { applied } = await pullAndApply(USER1, "lifter-one@example.com");
 
     // The healthy op behind the poison one still landed...
     expect(applied).toBe(1);

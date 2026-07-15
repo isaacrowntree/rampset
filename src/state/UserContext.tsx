@@ -87,6 +87,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
       }
       if (cancelled) return;
 
+      // Publish the resolved identity before anything can sync: writes leave
+      // this device filed under the Access session, not the selected avatar.
+      const { setAccessIdentity } = await import("@/lib/identityGate");
+      setAccessIdentity(accessEmail);
+
       const savedId = localStorage.getItem(ACTIVE_KEY);
       const active = pickActiveUser(all, accessEmail, savedId);
       if (active) localStorage.setItem(ACTIVE_KEY, active.id);

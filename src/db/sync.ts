@@ -82,10 +82,15 @@ function isJournalAck(body: unknown): body is { seq: number; accepted: number } 
   return typeof (body as { seq?: unknown } | null)?.seq === "number";
 }
 
-/** Push everything queued for this user. Failures keep the queue intact. */
-export async function flushOutbox(userId: string, email: string): Promise<void> {
+/** Push everything queued for this user. Failures keep the queue intact.
+ * `ok` distinguishes "the journal has it" from every silent failure — the
+ * sync status row is only honest if this is. */
+export async function flushOutbox(
+  userId: string,
+  email: string,
+): Promise<{ ok: boolean }> {
   const rows = await db.outbox.where({ userId }).toArray();
-  if (rows.length === 0) return;
+  if (rows.length === 0) return { ok: true }; // nothing queued is not a failure
   try {
     const res = await fetch("/api/sync", {
       method: "POST",
@@ -101,11 +106,13 @@ export async function flushOutbox(userId: string, email: string): Promise<void> 
       }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return;
-    if (!isJournalAck(await res.json().catch(() => null))) return;
+    if (!res.ok) return { ok: false };
+    if (!isJournalAck(await res.json().catch(() => null))) return { ok: false };
     await db.outbox.bulkDelete(rows.map((r) => r.id!));
+    return { ok: true };
   } catch {
     // offline — the outbox flushes next time
+    return { ok: false };
   }
 }
 
@@ -135,20 +142,24 @@ export async function applyOp(userId: string, op: SyncOp): Promise<boolean> {
   return true;
 }
 
-/** Pull ops after our cursor and apply them. Returns how many applied. */
-export async function pullAndApply(userId: string, email: string): Promise<number> {
+/** Pull ops after our cursor and apply them.
+ * `ok` says we actually reached the journal; `applied` counts new workouts. */
+export async function pullAndApply(
+  userId: string,
+  email: string,
+): Promise<{ ok: boolean; applied: number }> {
   const since = Number(localStorage.getItem(syncCursorKey(userId)) ?? 0) || 0;
   try {
     const res = await fetch(`/api/sync?since=${since}`, {
       headers: { "x-requested-with": "XMLHttpRequest", ...devHeaders(email) },
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) return 0;
+    if (!res.ok) return { ok: false, applied: 0 };
     const body = (await res.json().catch(() => null)) as
       | { ops?: Array<SyncOp & { seq: number }>; seq?: number }
       | null;
     // Same reasoning as the outbox flush: an Access login page is a 200.
-    if (typeof body?.seq !== "number") return 0;
+    if (typeof body?.seq !== "number") return { ok: false, applied: 0 };
 
     let applied = 0;
     for (const op of body.ops ?? []) {
@@ -161,8 +172,8 @@ export async function pullAndApply(userId: string, email: string): Promise<numbe
       }
     }
     localStorage.setItem(syncCursorKey(userId), String(body.seq));
-    return applied;
+    return { ok: true, applied };
   } catch {
-    return 0;
+    return { ok: false, applied: 0 };
   }
 }
