@@ -229,3 +229,35 @@ describe("Madcow (ramped sets + weekly shared-top progression)", () => {
     expect(fri?.workingWeightKg).toBe(100);
   });
 });
+
+/** One open workout per day, per day. The workout screen already assumes this
+ * ("an in-progress workout ALWAYS wins"), but it enforced it only in the page
+ * — so any remount that re-ran the effect minted a second row. Those phantoms
+ * are invisible (unfinished workouts don't show in History) and permanent. */
+describe("startWorkout (no phantom rows)", () => {
+  it("reuses today's open workout instead of starting a second one", async () => {
+    const first = await startWorkout(USER1, "day-5x5-a-user-1");
+    const second = await startWorkout(USER1, "day-5x5-a-user-1");
+
+    expect(second.workout.id).toBe(first.workout.id);
+    expect(await db.workouts.where({ userId: USER1 }).count()).toBe(1);
+  });
+
+  it("starts a fresh workout once the previous one is finished", async () => {
+    const first = await startWorkout(USER1, "day-5x5-a-user-1");
+    const squat = first.exercises.find((e) => e.exercise.name === "Squat")!;
+    await logSet(first.workout.id, USER1, squat.exercise.id, 0, { weightKg: 25, reps: 5 });
+    await finishWorkout(first.workout.id);
+
+    const second = await startWorkout(USER1, "day-5x5-a-user-1");
+    expect(second.workout.id).not.toBe(first.workout.id);
+  });
+
+  it("does not adopt an abandoned workout from an earlier date", async () => {
+    const stale = await startWorkout(USER1, "day-5x5-a-user-1");
+    await db.workouts.update(stale.workout.id, { date: "2020-01-01" });
+
+    const today = await startWorkout(USER1, "day-5x5-a-user-1");
+    expect(today.workout.id).not.toBe(stale.workout.id);
+  });
+});

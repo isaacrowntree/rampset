@@ -155,6 +155,21 @@ export async function buildSessionPlan(
 export async function startWorkout(userId: string, dayId: string): Promise<Session> {
   const plan = await buildSessionPlan(userId, dayId);
 
+  // Today's open workout for this day IS this session — adopt it rather than
+  // minting a second row. Callers remount (React re-runs the effect, the user
+  // navigates back), and without this each remount left an orphan behind:
+  // unfinished, so invisible in History, and never cleaned up. Scoped to today
+  // so an abandoned session from last week is never resurrected with a stale
+  // date.
+  const today = new Date().toISOString().slice(0, 10);
+  const open = await db.workouts
+    .where({ userId })
+    .filter(
+      (w) => w.programDayId === dayId && w.endTs === undefined && w.date === today,
+    )
+    .first();
+  if (open) return { workout: open, ...plan };
+
   // Body weight carries forward: the new workout is born with the last
   // recorded weight, so charts stay continuous and the field pre-fills.
   const past = await db.workouts

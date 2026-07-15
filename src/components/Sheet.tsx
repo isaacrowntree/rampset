@@ -4,18 +4,24 @@
  * swipe-to-dismiss, Escape, scroll lock, focus — and a history entry so the
  * Android back gesture closes the sheet instead of the screen. */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 export function Sheet({
   label,
   onClose,
   children,
   role = "dialog",
+  keepHistoryOnUnmount,
 }: {
   label: string;
   onClose: () => void;
   children: ReactNode;
   role?: "dialog" | "alertdialog";
+  /** Set this true before navigating the router. `router.replace` overwrites
+   * the top history entry — ours — so consuming it again on unmount would
+   * walk the user back to the screen they just left. A ref rather than a
+   * plain prop because the unmount cleanup has to read it at teardown. */
+  keepHistoryOnUnmount?: RefObject<boolean>;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const closedByPop = useRef(false);
@@ -70,7 +76,10 @@ export function Sheet({
       window.removeEventListener("popstate", onPop);
       document.removeEventListener("keydown", onKey);
       // Closed by button/backdrop/swipe: consume the entry we pushed.
-      if (!closedByPop.current) window.history.back();
+      // Navigating away instead: the router already overwrote it.
+      if (!closedByPop.current && !keepHistoryOnUnmount?.current) {
+        window.history.back();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

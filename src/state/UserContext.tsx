@@ -115,20 +115,9 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
       setUser(active);
       setReady(true);
-
-      // Device sync happens in the background — the UI is live-bound, so
-      // pulled workouts appear the moment they land.
-      if (active) {
-        void import("@/db/sync")
-          .then(async ({ flushOutbox, pullAndApply }) => {
-            await flushOutbox(active.id, active.email).catch(() => {});
-            const applied = await pullAndApply(active.id, active.email).catch(() => 0);
-            if (applied > 0) {
-              console.info(`Rampset: synced ${applied} workouts from other devices`);
-            }
-          })
-          .catch(() => {});
-      }
+      // Sync is owned by <SyncEngine>, which runs on every foregrounding —
+      // not just here. A once-per-mount sync never fires again inside a
+      // resumed iOS PWA.
     })();
     return () => {
       cancelled = true;

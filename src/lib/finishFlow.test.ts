@@ -58,6 +58,32 @@ describe("completeWorkout", () => {
     expect(pushStarted).toBe(true);
   });
 
+  // The workout is already committed to IndexedDB by this point. If queueing
+  // it for sync fails, the flow must still celebrate and navigate — stranding
+  // the user on the workout screen leaves the active-workout pointer cleared,
+  // so the screen starts the NEXT workout and the finished one is never seen
+  // again.
+  it("still celebrates and navigates when the sync enqueue fails", async () => {
+    const workoutId = await aLoggedWorkout();
+    const navigate = vi.fn();
+    const pushBackground = vi.fn();
+    const enqueue = vi.fn(async () => {
+      throw new Error("IndexedDB unavailable");
+    });
+
+    await completeWorkout(
+      { userId: USER1, email: EMAIL, workoutId, workSets: 1, tonnageKg: 137.5 },
+      { navigate, pushBackground, enqueue },
+    );
+
+    expect(navigate).toHaveBeenCalledWith("/history");
+    expect(takeJustFinished()).toEqual({ workoutId, tonnageKg: 137.5 });
+    // The workout itself survived — only the queueing failed.
+    expect((await db.workouts.get(workoutId))?.endTs).toBeDefined();
+    // And the push still runs, so the outbox gets another chance.
+    expect(pushBackground).toHaveBeenCalled();
+  });
+
   it("discards an empty workout and returns Home without a congrats", async () => {
     const dayB = await db.programDays.get("day-5x5-b-user-1");
     const s = await startWorkout(USER1, dayB!.id);

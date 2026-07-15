@@ -4,10 +4,12 @@ import { type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { UserProvider } from "@/state/UserContext";
 import { BottomNav } from "./BottomNav";
+import { SyncEngine } from "./SyncEngine";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <UserProvider>
+      <SyncEngine />
       <Shell>{children}</Shell>
     </UserProvider>
   );

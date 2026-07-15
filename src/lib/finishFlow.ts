@@ -29,6 +29,8 @@ export interface CompleteWorkoutDeps {
    * AFTER navigation and never awaited, so a slow connection can't stall the
    * Finish flow. Overridable for tests. */
   pushBackground?: (userId: string, email: string) => void;
+  /** Queue the finished workout for sync. Overridable for tests. */
+  enqueue?: (userId: string, workoutId: string) => Promise<void>;
 }
 
 /** Flush the sync outbox and snapshot to the cloud. Chunk imports and the
@@ -50,7 +52,11 @@ export async function completeWorkout(
   deps: CompleteWorkoutDeps,
 ): Promise<void> {
   const { userId, email, workoutId, workSets, tonnageKg } = args;
-  const { navigate, pushBackground = defaultPushBackground } = deps;
+  const {
+    navigate,
+    pushBackground = defaultPushBackground,
+    enqueue = enqueueFinishedWorkout,
+  } = deps;
 
   // Local + fast (IndexedDB only). An empty workout is discarded here.
   await finishWorkout(workoutId);
@@ -64,7 +70,16 @@ export async function completeWorkout(
   // Queue the finished workout for sync. This is local (no network), so it's
   // safe to await — it guarantees nothing is lost even if the push below never
   // gets a connection.
-  await enqueueFinishedWorkout(userId, workoutId);
+  //
+  // If queueing itself fails the workout is still committed, so we carry on:
+  // stranding the user here would leave the active-workout pointer cleared and
+  // the screen would silently start the NEXT workout instead.
+  try {
+    await enqueue(userId, workoutId);
+  } catch {
+    // Not queued — the workout lives on locally until a later sync sweep
+    // picks it up. Better than losing the congrats and the navigation.
+  }
 
   // Celebrate + leave INSTANTLY, then let the network catch up in the
   // background.

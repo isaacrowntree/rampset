@@ -73,6 +73,15 @@ export async function enqueueFinishedWorkout(
   await db.outbox.add({ userId, opId: op.opId, kind: op.kind, payload: op.payload });
 }
 
+/** Did this response actually come from the journal? An expired Cloudflare
+ * Access session redirects to a same-origin login page, which fetch follows
+ * and reports as a 200 — so `res.ok` alone is not evidence of anything. The
+ * outbox holds the only copy of an unsynced workout, so it may only be
+ * drained against a reply the journal demonstrably wrote. */
+function isJournalAck(body: unknown): body is { seq: number; accepted: number } {
+  return typeof (body as { seq?: unknown } | null)?.seq === "number";
+}
+
 /** Push everything queued for this user. Failures keep the queue intact. */
 export async function flushOutbox(userId: string, email: string): Promise<void> {
   const rows = await db.outbox.where({ userId }).toArray();
@@ -80,13 +89,20 @@ export async function flushOutbox(userId: string, email: string): Promise<void> 
   try {
     const res = await fetch("/api/sync", {
       method: "POST",
-      headers: { "content-type": "application/json", ...devHeaders(email) },
+      headers: {
+        "content-type": "application/json",
+        // Makes Access answer an expired session with 401 rather than
+        // handing us its login page dressed as a 200.
+        "x-requested-with": "XMLHttpRequest",
+        ...devHeaders(email),
+      },
       body: JSON.stringify({
         ops: rows.map((r) => ({ opId: r.opId, kind: r.kind, payload: r.payload })),
       }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return;
+    if (!isJournalAck(await res.json().catch(() => null))) return;
     await db.outbox.bulkDelete(rows.map((r) => r.id!));
   } catch {
     // offline — the outbox flushes next time
@@ -124,16 +140,27 @@ export async function pullAndApply(userId: string, email: string): Promise<numbe
   const since = Number(localStorage.getItem(syncCursorKey(userId)) ?? 0) || 0;
   try {
     const res = await fetch(`/api/sync?since=${since}`, {
-      headers: devHeaders(email),
+      headers: { "x-requested-with": "XMLHttpRequest", ...devHeaders(email) },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return 0;
-    const body = (await res.json()) as { ops: Array<SyncOp & { seq: number }>; seq: number };
+    const body = (await res.json().catch(() => null)) as
+      | { ops?: Array<SyncOp & { seq: number }>; seq?: number }
+      | null;
+    // Same reasoning as the outbox flush: an Access login page is a 200.
+    if (typeof body?.seq !== "number") return 0;
+
     let applied = 0;
     for (const op of body.ops ?? []) {
-      if (await applyOp(userId, op)) applied++;
+      try {
+        if (await applyOp(userId, op)) applied++;
+      } catch {
+        // One corrupt op must not strand every op behind it — and must not
+        // pin the cursor here, or every later sync refetches the same op,
+        // throws again, and never makes progress.
+      }
     }
-    localStorage.setItem(syncCursorKey(userId), String(body.seq ?? since));
+    localStorage.setItem(syncCursorKey(userId), String(body.seq));
     return applied;
   } catch {
     return 0;

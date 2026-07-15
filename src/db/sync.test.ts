@@ -80,6 +80,27 @@ describe("outbox flush", () => {
     await flushOutbox(USER1, "lifter-one@example.com");
     expect(await db.outbox.count()).toBe(1);
   });
+
+  // An expired Cloudflare Access session redirects to a same-origin login
+  // page, which fetch follows and reports as a 200 — so `res.ok` is true
+  // while the journal never saw the ops. Draining here destroys the only
+  // copy of an unsynced workout.
+  it("keeps ops queued when Access answers with its 200 login page", async () => {
+    const workoutId = await finishRealWorkout();
+    await enqueueFinishedWorkout(USER1, workoutId);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response("<!DOCTYPE html><title>Sign in</title>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+
+    await flushOutbox(USER1, "lifter-one@example.com");
+    expect(await db.outbox.count()).toBe(1);
+  });
 });
 
 describe("pull and apply", () => {
@@ -107,6 +128,40 @@ describe("pull and apply", () => {
     expect(pes[0].workingWeightKg).toBe(30);
     // cursor advanced
     expect(localStorage.getItem(syncCursorKey(USER1))).toBe("1");
+  });
+
+  // One malformed op must not take the whole journal down with it. The apply
+  // loop and the cursor write share a try/catch, so a single throwing op
+  // leaves the cursor unmoved — every later sync refetches from the same
+  // place, hits the same op, and throws again. Sync is wedged forever, and
+  // silently, because pullAndApply reports 0 either way.
+  it("steps over a malformed op instead of wedging the cursor", async () => {
+    const workoutId = await finishRealWorkout();
+    const op = await buildFinishedWorkoutOp(workoutId);
+
+    await db.delete();
+    await db.open();
+    await seedIfEmpty();
+
+    const poison = {
+      opId: "corrupt",
+      kind: "finishedWorkout",
+      payload: { workout: { id: "bad", userId: USER1 }, sets: null, weights: [], exercises: [] },
+    };
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(
+        JSON.stringify({ ops: [{ ...poison, seq: 1 }, { ...op, seq: 2 }], seq: 2 }),
+        { status: 200 },
+      ),
+    ));
+
+    const applied = await pullAndApply(USER1, "lifter-one@example.com");
+
+    // The healthy op behind the poison one still landed...
+    expect(applied).toBe(1);
+    expect(await db.workouts.get(workoutId)).toBeDefined();
+    // ...and the cursor moved on, so the next sync makes progress.
+    expect(localStorage.getItem(syncCursorKey(USER1))).toBe("2");
   });
 
   it("re-applying the same op is a no-op", async () => {

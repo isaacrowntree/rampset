@@ -60,6 +60,13 @@ export async function restoreBackup(
   if (data.format !== "liftlog-backup" || data.version !== 1) {
     throw new Error("Not a LiftLog backup file");
   }
+  // The rows below are written verbatim, keeping the userId they were
+  // exported with. Restoring someone else's file would therefore wipe THIS
+  // user's history and replace it with rows no query can ever read again —
+  // and report success. Refuse instead.
+  if (data.userId !== userId) {
+    throw new Error("This backup belongs to a different user");
+  }
 
   await db.transaction(
     "rw",

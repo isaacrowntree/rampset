@@ -4,6 +4,7 @@
  * dialog with the app's own sheet. */
 
 import { Sheet } from "./Sheet";
+import type { RefObject } from "react";
 
 export function ConfirmSheet({
   title,
@@ -12,6 +13,7 @@ export function ConfirmSheet({
   onConfirm,
   onCancel,
   tone = "danger",
+  keepHistoryOnUnmount,
 }: {
   title: string;
   body: string;
@@ -20,9 +22,16 @@ export function ConfirmSheet({
   onCancel: () => void;
   /** danger = red (destructive); positive = green (finishing well). */
   tone?: "danger" | "positive";
+  /** See Sheet: set when confirming navigates instead of just closing. */
+  keepHistoryOnUnmount?: RefObject<boolean>;
 }) {
   return (
-    <Sheet label={title} onClose={onCancel} role="alertdialog">
+    <Sheet
+      label={title}
+      onClose={onCancel}
+      role="alertdialog"
+      keepHistoryOnUnmount={keepHistoryOnUnmount}
+    >
       <h2 className="disp text-[18px]">{title}</h2>
       <p className="mt-1.5 text-[14px] leading-relaxed text-ink-dim">{body}</p>
       <div className="mt-5 flex flex-col gap-2.5">

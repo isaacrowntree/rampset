@@ -42,6 +42,9 @@ function WorkoutScreen() {
     tonnageKg: number;
   } | null>(null);
   const finishing = useRef(false);
+  /** Set before any router.replace out of this screen, so the confirm sheet
+   * doesn't also pop a history entry the router already consumed. */
+  const navigatingAway = useRef(false);
   const [discardCount, setDiscardCount] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -76,9 +79,11 @@ function WorkoutScreen() {
         router.replace("/");
         return;
       }
+      if (cancelled) return; // a dead mount must not start anything
       const s = await startWorkout(user.id, day.id);
+      if (cancelled) return;
       localStorage.setItem(storageKey, s.workout.id);
-      if (!cancelled) setSession(s);
+      setSession(s);
     })();
     return () => {
       cancelled = true;
@@ -108,12 +113,24 @@ function WorkoutScreen() {
     if (finishing.current) return; // double-tap guard
     finishing.current = true;
     timer.stop();
-    // Local commit + congrats + navigation happen instantly; sync/backup are
-    // fired detached, so a slow connection can't freeze the Finish flow.
-    await completeWorkout(
-      { userId: user.id, email: user.email, workoutId: session.workout.id, workSets, tonnageKg },
-      { navigate: (path) => router.replace(path) },
-    );
+    try {
+      // Local commit + congrats + navigation happen instantly; sync/backup are
+      // fired detached, so a slow connection can't freeze the Finish flow.
+      await completeWorkout(
+        { userId: user.id, email: user.email, workoutId: session.workout.id, workSets, tonnageKg },
+        {
+          navigate: (path) => {
+            navigatingAway.current = true;
+            router.replace(path);
+          },
+        },
+      );
+    } finally {
+      // Never latch the button dead: the workout is already committed
+      // locally, so a failure here must leave Finish tappable again.
+      finishing.current = false;
+      setConfirmingFinish(null);
+    }
   };
 
   /** Minimize keeps everything — including an active rest countdown. */
@@ -155,6 +172,7 @@ function WorkoutScreen() {
     await db.sets.where({ workoutId: session.workout.id }).delete();
     await db.workouts.delete(session.workout.id);
     localStorage.removeItem(activeWorkoutKey(user.id));
+    navigatingAway.current = true;
     router.replace("/");
   };
 
@@ -288,6 +306,7 @@ function WorkoutScreen() {
           }
           confirmLabel={confirmingFinish.workSets === 0 ? "Finish anyway" : "Finish workout"}
           tone={confirmingFinish.workSets === 0 ? "danger" : "positive"}
+          keepHistoryOnUnmount={navigatingAway}
           onConfirm={() =>
             void finish(confirmingFinish.tonnageKg, confirmingFinish.workSets)
           }
@@ -300,6 +319,7 @@ function WorkoutScreen() {
           title="Discard this workout?"
           body={`${discardCount} logged set${discardCount === 1 ? "" : "s"} will be deleted. This can't be undone.`}
           confirmLabel={`Delete ${discardCount} set${discardCount === 1 ? "" : "s"}`}
+          keepHistoryOnUnmount={navigatingAway}
           onConfirm={() => void discard()}
           onCancel={() => setConfirmingDiscard(false)}
         />
