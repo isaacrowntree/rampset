@@ -17,6 +17,8 @@ export interface OpStore {
   insert(op: JournalOp): number | null;
   since(seq: number): StoredOp[];
   maxSeq(): number;
+  /** Drop every op. Maintenance only — see handleReset. */
+  clear(): number;
 }
 
 export function handlePush(
@@ -42,6 +44,20 @@ export function handlePull(
   return { ops: store.since(from), seq: store.maxSeq() };
 }
 
+/** Empty the journal.
+ *
+ * The log is append-only and has no delete op, so an op that should never have
+ * been recorded cannot be withdrawn — and it replays onto any device that syncs
+ * from seq 0, resurrecting itself forever. Reset is the escape hatch.
+ *
+ * Only safe when the R2 snapshot already carries the full corrected history:
+ * devices bootstrap from there, and the journal rebuilds from the next finished
+ * workout. Not reachable from /api/sync (which serves only GET and POST) —
+ * callers need the Durable Object binding. */
+export function handleReset(store: OpStore): { cleared: number } {
+  return { cleared: store.clear() };
+}
+
 /** In-memory store for tests. */
 export class MemoryOpStore implements OpStore {
   private ops: StoredOp[] = [];
@@ -59,6 +75,12 @@ export class MemoryOpStore implements OpStore {
   }
   maxSeq(): number {
     return this.ops.length;
+  }
+  clear(): number {
+    const n = this.ops.length;
+    this.ops = [];
+    this.ids.clear();
+    return n;
   }
 }
 
@@ -112,5 +134,14 @@ export class SqlOpStore implements OpStore {
   maxSeq(): number {
     const rows = this.sql.exec(`SELECT MAX(seq) AS m FROM ops`).toArray();
     return Number(rows[0]?.m ?? 0) || 0;
+  }
+
+  clear(): number {
+    const n = this.maxSeq();
+    this.sql.exec(`DELETE FROM ops`);
+    // Reset AUTOINCREMENT too, so the rebuilt journal starts at seq 1 and a
+    // device holding a stale cursor doesn't skip the new ops.
+    this.sql.exec(`DELETE FROM sqlite_sequence WHERE name = 'ops'`);
+    return n;
   }
 }
