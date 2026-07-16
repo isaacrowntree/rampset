@@ -7,15 +7,12 @@
  * was that a week of failed syncs looked exactly like success. This row is the
  * difference. */
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
 import { useUser } from "@/state/UserContext";
-import {
-  subscribeSyncState,
-  readSyncState,
-  readServerSyncState,
-} from "@/lib/syncEngine";
+import type { SyncState } from "durable-sync/client";
+import { syncFor } from "@/lib/syncFor";
 
 function ago(ts: number, now: number): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));
@@ -59,16 +56,26 @@ export function summarise(
   };
 }
 
+/** Stable no-ops for the pre-boot render, when there is no user yet.
+ * useSyncExternalStore requires a referentially stable snapshot or it spins. */
+const NO_SUBSCRIBE = () => () => {};
+const NO_STATE: SyncState = {};
+const EMPTY_STATE = () => NO_STATE;
+
 export function SyncStatusRow() {
   const { user } = useUser();
   const userId = user?.id ?? "";
 
   // Sync state changes from timers and page-lifecycle events, never from
   // rendering — which is exactly what useSyncExternalStore is for. Bound to
-  // the active user: state, cursor and epoch are all per-user, so the other
-  // avatar's sync is none of this row's business.
-  const getSnapshot = useCallback(() => readSyncState(userId), [userId]);
-  const state = useSyncExternalStore(subscribeSyncState, getSnapshot, readServerSyncState);
+  // the active user's engine: state, cursor and epoch are all per-user, so the
+  // other avatar's sync is none of this row's business.
+  const sync = user ? syncFor(user) : null;
+  const state = useSyncExternalStore(
+    sync?.subscribe ?? NO_SUBSCRIBE,
+    sync?.getState ?? EMPTY_STATE,
+    sync?.getServerState ?? EMPTY_STATE,
+  );
 
   // Scoped like flushOutbox is — an unscoped count reports the other avatar's
   // pending workouts as this one's, forever.

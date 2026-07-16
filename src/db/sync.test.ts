@@ -6,12 +6,7 @@ import { setAccessIdentity } from "@/lib/identityGate";
 import { startWorkout, logSet, finishWorkout } from "./session";
 import {
   buildFinishedWorkoutOp,
-  enqueueFinishedWorkout,
-  flushOutbox,
-  pullAndApply,
   applyOp,
-  syncCursorKey,
-  syncEpochKey,
   deleteWorkoutOpId,
 } from "./sync";
 
@@ -59,188 +54,46 @@ describe("buildFinishedWorkoutOp", () => {
   });
 });
 
-describe("outbox flush", () => {
-  it("sends queued ops and drains the outbox on success", async () => {
-    const workoutId = await finishRealWorkout();
-    await enqueueFinishedWorkout(USER1, workoutId);
-    expect(await db.outbox.count()).toBe(1);
-
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ seq: 1, accepted: 1 }), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    await flushOutbox(USER1, "lifter-one@example.com");
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(await db.outbox.count()).toBe(0);
-  });
-
-  it("keeps ops queued when offline", async () => {
-    const workoutId = await finishRealWorkout();
-    await enqueueFinishedWorkout(USER1, workoutId);
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new TypeError("network down");
-    }));
-    await flushOutbox(USER1, "lifter-one@example.com");
-    expect(await db.outbox.count()).toBe(1);
-  });
-
-  // An expired Cloudflare Access session redirects to a same-origin login
-  // page, which fetch follows and reports as a 200 — so `res.ok` is true
-  // while the journal never saw the ops. Draining here destroys the only
-  // copy of an unsynced workout.
-  it("keeps ops queued when Access answers with its 200 login page", async () => {
-    const workoutId = await finishRealWorkout();
-    await enqueueFinishedWorkout(USER1, workoutId);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response("<!DOCTYPE html><title>Sign in</title>", {
-          status: 200,
-          headers: { "content-type": "text/html" },
-        }),
-      ),
-    );
-
-    await flushOutbox(USER1, "lifter-one@example.com");
-    expect(await db.outbox.count()).toBe(1);
-  });
-});
-
-describe("pull and apply", () => {
-  it("applies a finished-workout op from another device", async () => {
-    // Device A produces the op
+/** applyOp is the half durable-sync cannot have: what an op MEANS here. The
+ * library calls it and counts what it returns; everything below is ours. */
+describe("applying a finished-workout op", () => {
+  it("brings across the workout, its sets, and the progression it produced", async () => {
     const workoutId = await finishRealWorkout();
     const op = await buildFinishedWorkoutOp(workoutId);
 
-    // Device B: fresh db
+    // Device B: fresh db, same seed.
     await db.delete();
     await db.open();
     await seedIfEmpty();
 
-    vi.stubGlobal("fetch", vi.fn(async () =>
-      new Response(JSON.stringify({ ops: [{ ...op, seq: 1 }], seq: 1 }), { status: 200 }),
-    ));
-    const { applied } = await pullAndApply(USER1, "lifter-one@example.com");
-    expect(applied).toBe(1);
+    expect(await applyOp(USER1, op!)).toBe(true);
     expect(await db.workouts.get(workoutId)).toBeDefined();
     expect(await db.sets.where({ workoutId }).count()).toBe(5);
-    // progression state came along (squat B advanced to 30)
+
     const pes = await db.programExercises
       .where({ programDayId: "day-5x5-b-user-1" })
       .sortBy("position");
-    expect(pes[0].workingWeightKg).toBe(30);
-    // cursor advanced
-    expect(localStorage.getItem(syncCursorKey(USER1))).toBe("1");
+    expect(pes[0].workingWeightKg).toBe(30); // squat B advanced
   });
 
-  // One malformed op must not take the whole journal down with it. The apply
-  // loop and the cursor write share a try/catch, so a single throwing op
-  // leaves the cursor unmoved — every later sync refetches from the same
-  // place, hits the same op, and throws again. Sync is wedged forever, and
-  // silently, because pullAndApply reports 0 either way.
-  it("steps over a malformed op instead of wedging the cursor", async () => {
-    const workoutId = await finishRealWorkout();
-    const op = await buildFinishedWorkoutOp(workoutId);
-
-    await db.delete();
-    await db.open();
-    await seedIfEmpty();
-
-    const poison = {
-      opId: "corrupt",
-      kind: "finishedWorkout",
-      payload: { workout: { id: "bad", userId: USER1 }, sets: null, weights: [], exercises: [] },
-    };
-    vi.stubGlobal("fetch", vi.fn(async () =>
-      new Response(
-        JSON.stringify({ ops: [{ ...poison, seq: 1 }, { ...op, seq: 2 }], seq: 2 }),
-        { status: 200 },
-      ),
-    ));
-
-    const { applied } = await pullAndApply(USER1, "lifter-one@example.com");
-
-    // The healthy op behind the poison one still landed...
-    expect(applied).toBe(1);
-    expect(await db.workouts.get(workoutId)).toBeDefined();
-    // ...and the cursor moved on, so the next sync makes progress.
-    expect(localStorage.getItem(syncCursorKey(USER1))).toBe("2");
-  });
-
-  it("re-applying the same op is a no-op", async () => {
+  it("re-applying the same op changes nothing", async () => {
     const workoutId = await finishRealWorkout();
     const op = await buildFinishedWorkoutOp(workoutId);
     const before = await db.sets.count();
-    await applyOp(USER1, op!);
+
+    expect(await applyOp(USER1, op!)).toBe(false); // already have it
     expect(await db.sets.count()).toBe(before);
   });
 
-  it("pulls only ops after the stored cursor", async () => {
-    localStorage.setItem(syncCursorKey(USER1), "7");
-    const fetchMock = vi.fn(async (_input: string | URL | Request) =>
-      new Response(JSON.stringify({ ops: [], seq: 7 }), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    await pullAndApply(USER1, "lifter-one@example.com");
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("since=7");
-  });
-});
-
-/** A cursor only means something against the journal generation that issued
- * it. After a journal reset the rebuilt log restarts at seq 1, so a device
- * still holding cursor 4 asks for `seq > 4` and is told "nothing" — forever.
- * The epoch is how it notices and replays. */
-describe("journal epoch", () => {
-  it("replays from zero when the journal reports a new epoch", async () => {
+  it("never adopts the household's other user's workout", async () => {
     const workoutId = await finishRealWorkout();
     const op = await buildFinishedWorkoutOp(workoutId);
+    op!.payload.workout.userId = "user-2";
 
-    // Device B: has synced before, cursor is way past the rebuilt journal.
-    await db.delete();
-    await db.open();
-    await seedIfEmpty();
-    localStorage.setItem(syncCursorKey(USER1), "4");
-    localStorage.setItem(syncEpochKey(USER1), "old-generation");
-
-    const seen: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      seen.push(url);
-      const since = Number(new URL(url, "http://x").searchParams.get("since"));
-      const ops = since < 1 ? [{ ...op, seq: 1 }] : [];
-      return new Response(JSON.stringify({ ops, seq: 1, epoch: "new-generation" }), { status: 200 });
-    }));
-
-    const { applied } = await pullAndApply(USER1, "lifter-one@example.com");
-
-    // It re-asked from 0 rather than trusting the stale cursor...
-    expect(seen.some((u) => u.includes("since=4"))).toBe(true);
-    expect(seen.some((u) => u.includes("since=0"))).toBe(true);
-    // ...and the op the stale cursor would have hidden was applied.
-    expect(applied).toBe(1);
-    expect(await db.workouts.get(workoutId)).toBeDefined();
-    expect(localStorage.getItem(syncEpochKey(USER1))).toBe("new-generation");
-  });
-
-  it("does not replay when the epoch is unchanged", async () => {
-    localStorage.setItem(syncCursorKey(USER1), "7");
-    localStorage.setItem(syncEpochKey(USER1), "same");
-    const fetchMock = vi.fn(async (_input: string | URL | Request) =>
-      new Response(JSON.stringify({ ops: [], seq: 7, epoch: "same" }), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    await pullAndApply(USER1, "lifter-one@example.com");
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("since=7");
+    expect(await applyOp(USER1, op!)).toBe(false);
   });
 });
 
-/** The journal is append-only, so a workout that should never have been
- * recorded (e.g. one logged purely to advance the program) can only be undone
- * by a further op. Deleting it must also roll back the working weight it
- * advanced — otherwise the history says one thing and the program another. */
 describe("deleteWorkout op", () => {
   it("removes the workout, its sets, and rolls back the weight it advanced", async () => {
     const workoutId = await finishRealWorkout();
@@ -328,46 +181,6 @@ describe("linked progression crosses devices", () => {
 
     expect(await sq("day-5x5-b-user-1")).toBe(authorB);
     expect(await sq("day-5x5-a-user-1")).toBe(authorA); // the sibling the op must carry
-  });
-});
-
-/** The journal is addressed by the SERVER-side Access identity, but the ops
- * carry whichever avatar is selected here. finishFlow calls flushOutbox
- * directly — not through syncNow — so syncNow's gate doesn't cover it. Without
- * a gate of its own, finishing a workout as the other avatar posts it to the
- * signed-in identity's journal, gets a valid ack, and DRAINS the outbox: the
- * op is junk in an append-only log that will never serve it back, and the only
- * copy of the workout is gone. That is the incident this journal exists to
- * prevent, on the path that runs after every workout. */
-describe("flushOutbox identity gate", () => {
-  it("refuses to push an avatar that isn't the signed-in identity", async () => {
-    const workoutId = await finishRealWorkout();
-    await enqueueFinishedWorkout(USER1, workoutId);
-    setAccessIdentity("someone-else@example.com");
-
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ seq: 1, accepted: 1 }), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const r = await flushOutbox(USER1, "lifter-one@example.com");
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(r.ok).toBe(false);
-    expect(await db.outbox.count()).toBe(1); // the only copy survives
-  });
-
-  it("pushes normally when the avatar IS the signed-in identity", async () => {
-    const workoutId = await finishRealWorkout();
-    await enqueueFinishedWorkout(USER1, workoutId);
-    setAccessIdentity("lifter-one@example.com");
-
-    vi.stubGlobal("fetch", vi.fn(async () =>
-      new Response(JSON.stringify({ seq: 1, accepted: 1 }), { status: 200 }),
-    ));
-
-    expect((await flushOutbox(USER1, "lifter-one@example.com")).ok).toBe(true);
-    expect(await db.outbox.count()).toBe(0);
   });
 });
 

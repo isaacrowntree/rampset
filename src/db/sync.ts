@@ -1,13 +1,17 @@
 "use client";
 
-/** Device↔cloud sync over the per-user Durable Object journal.
- * Unit of sync: one FINISHED workout (workout row + its sets + the working
- * weights it produced). Ops are idempotent — opId is the workout id — and
- * queue in an outbox while offline. */
+/** What our ops MEAN.
+ *
+ * The transport — outbox, cursor, epochs, lifecycle triggers — is durable-sync;
+ * see syncFor.ts, which wires it to this app. What lives here is the half no
+ * sync library can have: the shape of our ops, and what applying one does to
+ * this database.
+ *
+ * Unit of sync: one FINISHED workout — the workout row, its sets, and the
+ * working weights it produced. Ops are idempotent; opId is the workout id. */
 
 import { db } from "./db";
 import type { Exercise, SetEntry, Workout } from "@/lib/types";
-import { mayWriteAs } from "@/lib/identityGate";
 
 /** A slot's progression state as the author left it. `sets`/`deloadCount` are
  * optional so ops written before they were carried still apply. */
@@ -51,22 +55,6 @@ export type SyncOp = FinishedWorkoutOp | DeleteWorkoutOp;
  * distinctly from the workout's own opId, which is the bare workout id. */
 export function deleteWorkoutOpId(workoutId: string): string {
   return `del:${workoutId}`;
-}
-
-export function syncCursorKey(userId: string): string {
-  return `liftlog.syncCursor.${userId}`;
-}
-
-/** Which generation of the journal our cursor belongs to. A cursor is only
- * meaningful against the log that issued it — see pullAndApply. */
-export function syncEpochKey(userId: string): string {
-  return `liftlog.syncEpoch.${userId}`;
-}
-
-function devHeaders(email: string): HeadersInit {
-  return process.env.NODE_ENV === "development"
-    ? { "x-liftlog-dev-user": email }
-    : {};
 }
 
 /** Snapshot a finished workout into a sync op. Null for unfinished/missing. */
@@ -115,65 +103,20 @@ export async function buildFinishedWorkoutOp(
   };
 }
 
+/** Queue a finished workout. Local and durable — no network — so it is safe to
+ * await on the finish path, and it is what guarantees nothing is lost when the
+ * push has no connection. */
 export async function enqueueFinishedWorkout(
   userId: string,
   workoutId: string,
 ): Promise<void> {
   const op = await buildFinishedWorkoutOp(workoutId);
   if (!op) return;
-  const existing = await db.outbox.where({ opId: op.opId }).count();
-  if (existing > 0) return;
-  await db.outbox.add({ userId, opId: op.opId, kind: op.kind, payload: op.payload });
-}
-
-/** Did this response actually come from the journal? An expired Cloudflare
- * Access session redirects to a same-origin login page, which fetch follows
- * and reports as a 200 — so `res.ok` alone is not evidence of anything. The
- * outbox holds the only copy of an unsynced workout, so it may only be
- * drained against a reply the journal demonstrably wrote. */
-function isJournalAck(body: unknown): body is { seq: number; accepted: number } {
-  return typeof (body as { seq?: unknown } | null)?.seq === "number";
-}
-
-/** Push everything queued for this user. Failures keep the queue intact.
- * `ok` distinguishes "the journal has it" from every silent failure — the
- * sync status row is only honest if this is. */
-export async function flushOutbox(
-  userId: string,
-  email: string,
-): Promise<{ ok: boolean }> {
-  // The gate lives HERE, not only in syncNow: finishFlow calls this directly
-  // after every workout. The journal is addressed by the server-side Access
-  // identity, so pushing another avatar's ops files them under the wrong user
-  // — and the ack is valid, so we'd drain the outbox against a journal that
-  // will never serve them back. The outbox is the only copy.
-  if (!mayWriteAs(email)) return { ok: false };
-
-  const rows = await db.outbox.where({ userId }).toArray();
-  if (rows.length === 0) return { ok: true }; // nothing queued is not a failure
-  try {
-    const res = await fetch("/api/sync", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        // Makes Access answer an expired session with 401 rather than
-        // handing us its login page dressed as a 200.
-        "x-requested-with": "XMLHttpRequest",
-        ...devHeaders(email),
-      },
-      body: JSON.stringify({
-        ops: rows.map((r) => ({ opId: r.opId, kind: r.kind, payload: r.payload })),
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return { ok: false };
-    if (!isJournalAck(await res.json().catch(() => null))) return { ok: false };
-    await db.outbox.bulkDelete(rows.map((r) => r.id!));
-    return { ok: true };
-  } catch {
-    // offline — the outbox flushes next time
-    return { ok: false };
-  }
+  const user = await db.users.get(userId);
+  if (!user) return;
+  // Imported lazily: this module is the op vocabulary, and syncFor imports it.
+  const { syncFor } = await import("@/lib/syncFor");
+  await syncFor(user).enqueue(op);
 }
 
 /** Apply one journal op to this device. Existing workouts are never touched. */
@@ -257,61 +200,4 @@ async function applyWeight(w: WeightUpdate): Promise<void> {
   if (w.sets !== undefined) patch.sets = w.sets;
   if (w.deloadCount !== undefined) patch.deloadCount = w.deloadCount;
   await db.programExercises.update(pe.id, patch);
-}
-
-/** Pull ops after our cursor and apply them.
- * `ok` says we actually reached the journal; `applied` counts new workouts. */
-export async function pullAndApply(
-  userId: string,
-  email: string,
-): Promise<{ ok: boolean; applied: number }> {
-  const since = Number(localStorage.getItem(syncCursorKey(userId)) ?? 0) || 0;
-
-  interface PullBody {
-    ops?: Array<SyncOp & { seq: number }>;
-    seq?: number;
-    epoch?: string;
-  }
-  const pull = async (from: number): Promise<PullBody | null> => {
-    const res = await fetch(`/api/sync?since=${from}`, {
-      headers: { "x-requested-with": "XMLHttpRequest", ...devHeaders(email) },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const parsed = (await res.json().catch(() => null)) as PullBody | null;
-    // Same reasoning as the outbox flush: an Access login page is a 200.
-    return typeof parsed?.seq === "number" ? parsed : null;
-  };
-
-  try {
-    let body = await pull(since);
-    if (!body) return { ok: false, applied: 0 };
-
-    // A cursor is only meaningful against the journal generation that issued
-    // it. If the journal was rebuilt, our cursor points into a log that no
-    // longer exists — usually PAST the new one, so `seq > cursor` matches
-    // nothing and we'd silently never sync again. Replay from the start;
-    // applyOp skips whatever we already hold, so it's cheap and safe.
-    const epoch = body.epoch;
-    if (epoch && epoch !== localStorage.getItem(syncEpochKey(userId))) {
-      body = await pull(0);
-      if (!body) return { ok: false, applied: 0 };
-      localStorage.setItem(syncEpochKey(userId), epoch);
-    }
-
-    let applied = 0;
-    for (const op of body.ops ?? []) {
-      try {
-        if (await applyOp(userId, op)) applied++;
-      } catch {
-        // One corrupt op must not strand every op behind it — and must not
-        // pin the cursor here, or every later sync refetches the same op,
-        // throws again, and never makes progress.
-      }
-    }
-    localStorage.setItem(syncCursorKey(userId), String(body.seq));
-    return { ok: true, applied };
-  } catch {
-    return { ok: false, applied: 0 };
-  }
 }

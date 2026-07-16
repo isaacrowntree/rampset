@@ -38,11 +38,16 @@ export interface CompleteWorkoutDeps {
  * detached from the UI. */
 function defaultPushBackground(userId: string, email: string): void {
   void (async () => {
-    const [{ flushOutbox }, { backupToCloud }] = await Promise.all([
-      import("@/db/sync"),
+    const [{ syncFor }, { backupToCloud }, { db }] = await Promise.all([
+      import("@/lib/syncFor"),
       import("@/lib/cloudBackup"),
+      import("@/db/db"),
     ]);
-    void flushOutbox(userId, email).catch(() => {});
+    const user = await db.users.get(userId);
+    // `force` skips the throttle: the throttle exists to collapse a
+    // foregrounding burst, not to make a just-finished workout wait 10s.
+    // It does NOT skip the identity gate — nothing does.
+    if (user) void syncFor(user).now({ force: true }).catch(() => {});
     void backupToCloud(userId, email).catch(() => {});
   })().catch(() => {});
 }
