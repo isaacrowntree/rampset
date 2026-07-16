@@ -8,10 +8,19 @@
 import { db } from "./db";
 import type { Exercise, SetEntry, Workout } from "@/lib/types";
 
+/** A slot's progression state as the author left it. `sets`/`deloadCount` are
+ * optional so ops written before they were carried still apply. */
+export interface WeightUpdate {
+  programExerciseId: string;
+  workingWeightKg: number;
+  sets?: number;
+  deloadCount?: number;
+}
+
 export interface FinishedWorkoutPayload {
   workout: Workout;
   sets: SetEntry[];
-  weights: Array<{ programExerciseId: string; workingWeightKg: number }>;
+  weights: WeightUpdate[];
   /** Exercises the sets reference — upserted on apply so ops from a device
    * with imported/custom exercises resolve everywhere. */
   exercises: Exercise[];
@@ -22,7 +31,7 @@ export interface FinishedWorkoutPayload {
  * the program prescribing a weight nothing in the log justifies. */
 export interface DeleteWorkoutPayload {
   workoutId: string;
-  weights?: Array<{ programExerciseId: string; workingWeightKg: number }>;
+  weights?: WeightUpdate[];
 }
 
 export interface FinishedWorkoutOp {
@@ -67,15 +76,30 @@ export async function buildFinishedWorkoutOp(
   if (!workout || workout.endTs === undefined) return null;
   const sets = await db.sets.where({ workoutId }).toArray();
 
+  // Every slot the finish touched — not just the finished day's.
+  //
+  // Linked progression writes a lift's new weight to its slots on OTHER days
+  // (squat is one ladder across A/B), so carrying only this day's slots means
+  // the peer advances the day it can see and silently keeps a stale weight on
+  // the day it can't. Scope to the whole program: it's ~10 rows, and the op
+  // should assert exactly what the author ended up with.
   const weights: FinishedWorkoutPayload["weights"] = [];
   if (workout.programDayId) {
-    const pes = await db.programExercises
-      .where({ programDayId: workout.programDayId })
-      .toArray();
+    const day = await db.programDays.get(workout.programDayId);
+    const dayIds = day
+      ? (await db.programDays.where({ programId: day.programId }).toArray()).map((d) => d.id)
+      : [workout.programDayId];
+    const pes = await db.programExercises.where("programDayId").anyOf(dayIds).toArray();
     for (const pe of pes) {
-      if (pe.workingWeightKg !== undefined) {
-        weights.push({ programExerciseId: pe.id, workingWeightKg: pe.workingWeightKg });
-      }
+      if (pe.workingWeightKg === undefined) continue;
+      weights.push({
+        programExerciseId: pe.id,
+        workingWeightKg: pe.workingWeightKg,
+        // The stall protocol drops 5×5 → 3×5 → 1×5 and counts deloads. Without
+        // these the peer keeps prescribing volume the author already cut.
+        sets: pe.sets,
+        deloadCount: pe.deloadCount,
+      });
     }
   }
   const exerciseIds = [...new Set(sets.map((s) => s.exerciseId))];
@@ -170,10 +194,7 @@ export async function applyOp(userId: string, op: SyncOp): Promise<boolean> {
       }
       await db.workouts.put(workout);
       if (sets.length) await db.sets.bulkPut(sets);
-      for (const w of weights) {
-        const pe = await db.programExercises.get(w.programExerciseId);
-        if (pe) await db.programExercises.update(pe.id, { workingWeightKg: w.workingWeightKg });
-      }
+      for (const w of weights) await applyWeight(w);
       created = true;
     },
   );
@@ -199,13 +220,24 @@ async function applyDeleteWorkout(
       await db.workouts.delete(workoutId);
       // Don't re-push a workout we've just been told to forget.
       await db.outbox.where({ opId: workoutId }).delete();
-      for (const w of weights ?? []) {
-        const pe = await db.programExercises.get(w.programExerciseId);
-        if (pe) await db.programExercises.update(pe.id, { workingWeightKg: w.workingWeightKg });
-      }
+      for (const w of weights ?? []) await applyWeight(w);
     },
   );
   return true;
+}
+
+/** Mirror one slot's progression state. Only fields the op actually carried
+ * are written, so an op from before `sets`/`deloadCount` existed is still a
+ * valid weight-only update rather than a reset to undefined. */
+async function applyWeight(w: WeightUpdate): Promise<void> {
+  const pe = await db.programExercises.get(w.programExerciseId);
+  if (!pe) return;
+  const patch: { workingWeightKg: number; sets?: number; deloadCount?: number } = {
+    workingWeightKg: w.workingWeightKg,
+  };
+  if (w.sets !== undefined) patch.sets = w.sets;
+  if (w.deloadCount !== undefined) patch.deloadCount = w.deloadCount;
+  await db.programExercises.update(pe.id, patch);
 }
 
 /** Pull ops after our cursor and apply them.

@@ -290,3 +290,40 @@ describe("deleteWorkout op", () => {
     expect(await db.workouts.get(workoutId)).toBeUndefined();
   });
 });
+
+/** Linked progression writes a lift's new weight to its slots on OTHER program
+ * days too (squat is one ladder across A/B). The op has to carry what the
+ * finish actually wrote, or the peer advances only the day it can see and the
+ * two devices quietly disagree about the other one — which is the whole bug
+ * class this journal exists to prevent. */
+describe("linked progression crosses devices", () => {
+  it("the peer ends up with the same weights as the author, on BOTH days", async () => {
+    const sq = async (day: string) =>
+      ((await db.programExercises.where({ programDayId: day }).sortBy("position"))[0])!
+        .workingWeightKg;
+
+    // Author finishes Workout B; linking advances squat on A and B.
+    const s = await startWorkout(USER1, "day-5x5-b-user-1");
+    const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+    const at = squat.targets[0]!.weightKg!;
+    for (let i = 0; i < 5; i++) {
+      await logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: at, reps: 5 });
+    }
+    await finishWorkout(s.workout.id);
+
+    const authorA = await sq("day-5x5-a-user-1");
+    const authorB = await sq("day-5x5-b-user-1");
+    expect(authorA).toBe(authorB); // linked, on the author
+
+    const op = await buildFinishedWorkoutOp(s.workout.id);
+
+    // Peer applies that op to a fresh device.
+    await db.delete();
+    await db.open();
+    await seedIfEmpty();
+    await applyOp(USER1, op!);
+
+    expect(await sq("day-5x5-b-user-1")).toBe(authorB);
+    expect(await sq("day-5x5-a-user-1")).toBe(authorA); // the sibling the op must carry
+  });
+});
