@@ -12,18 +12,42 @@
  * The two identities can't be reconciled client-side, so the honest move is to
  * refuse to write when they disagree. */
 
+/** The last identity we actually resolved. Survives reloads because the
+ * identity changes almost never, while the request that reveals it fails
+ * routinely — /api/me has a 2s timeout and a cold mobile network blows it. */
+const CACHE_KEY = "liftlog.accessIdentity";
+
 let accessEmail: string | null = null;
+
+function remembered(): string | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return localStorage.getItem(CACHE_KEY);
+  } catch {
+    return null;
+  }
+}
 
 /** Called once identity resolves (or doesn't) — see UserContext. */
 export function setAccessIdentity(email: string | null): void {
-  accessEmail = email;
+  if (email) {
+    accessEmail = email;
+    try {
+      localStorage?.setItem(CACHE_KEY, email);
+    } catch {
+      // private mode — we just re-resolve next launch
+    }
+    return;
+  }
+  // Unresolved this launch. Fall back to whoever we last resolved rather than
+  // opening the gate: a flaky request is not evidence that the user changed.
+  accessEmail = remembered();
 }
 
 /** May we file `email`'s data under the current Access session? */
 export function mayWriteAs(email: string): boolean {
-  // Unresolved identity is routine: /api/me has a 2s timeout and falls back to
-  // a saved selection. Blocking then would strand a device that is almost
-  // certainly fine, and the server is the real authority regardless.
+  // Only a device that has NEVER resolved an identity gets the benefit of the
+  // doubt. Once we've seen one, a failed /api/me falls back to it instead.
   if (accessEmail === null) return true;
   return accessEmail.toLowerCase() === email.toLowerCase();
 }

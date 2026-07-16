@@ -7,9 +7,10 @@
  * was that a week of failed syncs looked exactly like success. This row is the
  * difference. */
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
+import { useUser } from "@/state/UserContext";
 import {
   subscribeSyncState,
   readSyncState,
@@ -59,14 +60,24 @@ export function summarise(
 }
 
 export function SyncStatusRow() {
+  const { user } = useUser();
+  const userId = user?.id ?? "";
+
   // Sync state changes from timers and page-lifecycle events, never from
-  // rendering — which is exactly what useSyncExternalStore is for.
-  const state = useSyncExternalStore(
-    subscribeSyncState,
-    readSyncState,
-    readServerSyncState,
-  );
-  const pending = useLiveQuery(() => db.outbox.count(), [], 0) ?? 0;
+  // rendering — which is exactly what useSyncExternalStore is for. Bound to
+  // the active user: state, cursor and epoch are all per-user, so the other
+  // avatar's sync is none of this row's business.
+  const getSnapshot = useCallback(() => readSyncState(userId), [userId]);
+  const state = useSyncExternalStore(subscribeSyncState, getSnapshot, readServerSyncState);
+
+  // Scoped like flushOutbox is — an unscoped count reports the other avatar's
+  // pending workouts as this one's, forever.
+  const pending =
+    useLiveQuery(
+      () => (userId ? db.outbox.where({ userId }).count() : 0),
+      [userId],
+      0,
+    ) ?? 0;
 
   // "Synced 2 minutes ago" has to keep counting while the page sits open, and
   // reading the clock during render is impure. Tick it instead.
