@@ -5,9 +5,6 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
 import { useUser } from "@/state/UserContext";
 import { AppHeader } from "@/components/AppHeader";
-import { parseStrongLiftsCsv } from "@/lib/importers/stronglifts";
-import { parseStrongCsv } from "@/lib/importers/strong";
-import { importIntoStore, type ImportSummary } from "@/db/importStore";
 import { exportBackup, restoreBackup } from "@/db/backup";
 import { backupToCloud, restoreFromCloud } from "@/lib/cloudBackup";
 import { ConfirmSheet } from "@/components/ConfirmSheet";
@@ -18,10 +15,7 @@ import { SyncStatusRow } from "@/components/SyncStatusRow";
 
 export default function SettingsPage() {
   const { user, users, switchUser } = useUser();
-  const fileRef = useRef<HTMLInputElement>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
-  const [importing, setImporting] = useState(false);
-  const [summary, setSummary] = useState<ImportSummary | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = useState<
@@ -45,35 +39,6 @@ export default function SettingsPage() {
   );
 
   if (!user) return null;
-
-  const handleFile = async (file: File) => {
-    setImporting(true);
-    setError(null);
-    setSummary(null);
-    try {
-      const text = await file.text();
-      const header = text.slice(0, 400);
-      // Dialect auto-detect from the header row.
-      const result = header.includes("Set Order")
-        ? parseStrongCsv(text)
-        : header.includes("Workout,Workout Name") || header.includes("Date (yyyy/mm/dd)")
-          ? parseStrongLiftsCsv(text)
-          : null;
-      if (!result || result.workouts.length === 0) {
-        setError(
-          "This doesn't look like a StrongLifts or Strong export. Expected the CSV straight from either app's export screen.",
-        );
-        return;
-      }
-      const s = await importIntoStore(user.id, result);
-      setSummary(s);
-    } catch (e) {
-      setError(`Import failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setImporting(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
 
   const downloadBackup = async () => {
     const json = await exportBackup(user.id);
@@ -226,32 +191,6 @@ export default function SettingsPage() {
         </div>
 
         <button
-          onClick={() => fileRef.current?.click()}
-          disabled={importing}
-          className="flex w-full items-center justify-between border-b border-line px-4 py-3.5 text-left"
-        >
-          <div>
-            <div className="text-[15px] font-medium">
-              {importing ? "Importing…" : "Import CSV"}
-            </div>
-            <div className="text-[12.5px] text-ink-faint">
-              StrongLifts or Strong export — detected automatically
-            </div>
-          </div>
-          <span className="mono text-accent">↑</span>
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv,text/csv"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) void handleFile(f);
-          }}
-        />
-
-        <button
           onClick={exportCsv}
           className="flex w-full items-center justify-between border-b border-line px-4 py-3.5 text-left"
         >
@@ -336,16 +275,6 @@ export default function SettingsPage() {
         />
       </div>
 
-      {summary && (
-        <div className="mt-3 glass border-plate-10/40 p-4 text-[13.5px] leading-relaxed">
-          Imported {summary.workoutsAdded.toLocaleString()} workouts and{" "}
-          {summary.setsAdded.toLocaleString()} sets.
-          {summary.workoutsSkipped > 0 &&
-            ` Skipped ${summary.workoutsSkipped} already on this device.`}
-          {summary.exercisesCreated.length > 0 &&
-            ` Added ${summary.exercisesCreated.length} new exercises.`}
-        </div>
-      )}
       {notice && (
         <div className="mt-3 glass border-plate-10/40 p-4 text-[13.5px] leading-relaxed">
           {notice}
