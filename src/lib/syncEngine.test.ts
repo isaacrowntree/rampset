@@ -4,6 +4,7 @@ import {
   resetSyncEngine,
   readSyncState,
   subscribeSyncState,
+  syncStateKey,
   MIN_INTERVAL_MS,
 } from "./syncEngine";
 import type { Workout } from "@/lib/types";
@@ -53,7 +54,7 @@ describe("syncNow", () => {
   // The journal is keyed by the Access session but the ops carry the selected
   // avatar's rows, and the log is append-only — so one tap on the switcher
   // would file someone else's workouts in your journal forever.
-  it("refuses to sync an avatar that isn't the signed-in identity", async () => {
+  it("refuses to sync an avatar that isn't the signed-in identity, and says so", async () => {
     const d = deps({ mayWrite: () => false });
 
     const applied = await syncNow(USER1, EMAIL, d);
@@ -61,6 +62,8 @@ describe("syncNow", () => {
     expect(d.flush).not.toHaveBeenCalled();
     expect(d.pull).not.toHaveBeenCalled();
     expect(applied).toBe(0);
+    // Not silent: the row must not keep claiming success.
+    expect(readSyncState(USER1).lastError).toBeTruthy();
   });
 
   // A single iOS foregrounding fires visibilitychange + focus + pageshow.
@@ -100,22 +103,22 @@ describe("sync status", () => {
   it("records when the journal was last reached", async () => {
     const d = deps({ now: () => 1_700_000 });
     await syncNow(USER1, EMAIL, d);
-    expect(readSyncState().lastOkAt).toBe(1_700_000);
-    expect(readSyncState().lastError).toBeUndefined();
+    expect(readSyncState(USER1).lastOkAt).toBe(1_700_000);
+    expect(readSyncState(USER1).lastError).toBeUndefined();
   });
 
   it("does not claim success when the push failed", async () => {
     const d = deps({ flush: vi.fn(async () => ({ ok: false })) });
     await syncNow(USER1, EMAIL, d);
-    expect(readSyncState().lastOkAt).toBeUndefined();
-    expect(readSyncState().lastError).toBeTruthy();
+    expect(readSyncState(USER1).lastOkAt).toBeUndefined();
+    expect(readSyncState(USER1).lastError).toBeTruthy();
   });
 
   it("does not claim success when the pull failed", async () => {
     const d = deps({ pull: vi.fn(async () => ({ ok: false, applied: 0 })) });
     await syncNow(USER1, EMAIL, d);
-    expect(readSyncState().lastOkAt).toBeUndefined();
-    expect(readSyncState().lastError).toBeTruthy();
+    expect(readSyncState(USER1).lastOkAt).toBeUndefined();
+    expect(readSyncState(USER1).lastError).toBeTruthy();
   });
 
   it("keeps the last good time when a later attempt fails", async () => {
@@ -124,7 +127,7 @@ describe("sync status", () => {
     t += MIN_INTERVAL_MS + 1;
     await syncNow(USER1, EMAIL, deps({ now: () => t, pull: vi.fn(async () => ({ ok: false, applied: 0 })) }));
 
-    const s = readSyncState();
+    const s = readSyncState(USER1);
     expect(s.lastOkAt).toBe(1_700_000); // still true — it DID sync then
     expect(s.lastError).toBeTruthy();
   });
@@ -135,14 +138,14 @@ describe("sync status", () => {
  * call and React re-renders forever. */
 describe("sync state as an external store", () => {
   it("returns a stable snapshot reference until something changes", async () => {
-    const a = readSyncState();
-    expect(readSyncState()).toBe(a);
+    const a = readSyncState(USER1);
+    expect(readSyncState(USER1)).toBe(a);
 
     await syncNow(USER1, EMAIL, deps({ now: () => 1_700_000 }));
 
-    const b = readSyncState();
+    const b = readSyncState(USER1);
     expect(b).not.toBe(a);
-    expect(readSyncState()).toBe(b);
+    expect(readSyncState(USER1)).toBe(b);
   });
 
   it("notifies subscribers when a sync lands, and stops after unsubscribe", async () => {
@@ -156,5 +159,30 @@ describe("sync state as an external store", () => {
     resetSyncEngine();
     await syncNow(USER1, EMAIL, deps({ now: () => 1_800_000 }));
     expect(seen).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** Cursor and epoch are per-user; sync state was not. With two avatars on one
+ * device, user B read user A's "Synced 2 minutes ago" having never synced —
+ * which is the exact thing the status row exists to prevent. */
+describe("sync state is per-user", () => {
+  const USER2 = "user-2";
+
+  it("does not show one avatar the other's last-synced time", async () => {
+    await syncNow(USER1, EMAIL, deps({ now: () => 1_000_000 }));
+
+    expect(readSyncState(USER1).lastOkAt).toBe(1_000_000);
+    expect(readSyncState(USER2).lastOkAt).toBeUndefined();
+  });
+
+  it("gives each user a distinct storage key", () => {
+    expect(syncStateKey(USER1)).not.toBe(syncStateKey(USER2));
+    expect(syncStateKey(USER1)).toContain(USER1);
+  });
+
+  it("keeps a stable snapshot reference per user", async () => {
+    const a = readSyncState(USER1);
+    expect(readSyncState(USER1)).toBe(a);          // useSyncExternalStore spins otherwise
+    expect(readSyncState(USER2)).not.toBe(a);      // ...but not shared across users
   });
 });

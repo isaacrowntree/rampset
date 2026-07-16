@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { setAccessIdentity, mayWriteAs } from "./identityGate";
 
 beforeEach(() => {
+  localStorage.clear();
   setAccessIdentity(null);
 });
 
@@ -32,5 +33,33 @@ describe("mayWriteAs", () => {
   it("allows writes when the Access identity could not be resolved", () => {
     setAccessIdentity(null);
     expect(mayWriteAs("isaac@example.com")).toBe(true);
+  });
+});
+
+/** /api/me has a 2s timeout and a cold mobile network blows it routinely, so
+ * "unresolved" is a normal state — but the identity itself changes almost
+ * never. Falling back to the last one we DID resolve is strictly better than
+ * opening the gate on a flaky request. */
+describe("remembering the resolved identity", () => {
+  it("falls back to the last resolved identity when /api/me fails", () => {
+    setAccessIdentity("isaac@example.com"); // a launch where it worked
+    setAccessIdentity(null); // next launch: /api/me timed out
+
+    expect(mayWriteAs("isaac@example.com")).toBe(true);
+    expect(mayWriteAs("someone-else@example.com")).toBe(false); // still guarded
+  });
+
+  it("still allows writes on a device that has never resolved one", () => {
+    setAccessIdentity(null);
+    expect(mayWriteAs("anyone@example.com")).toBe(true);
+  });
+
+  it("a newly resolved identity replaces the remembered one", () => {
+    setAccessIdentity("old@example.com");
+    setAccessIdentity("new@example.com");
+    setAccessIdentity(null);
+
+    expect(mayWriteAs("new@example.com")).toBe(true);
+    expect(mayWriteAs("old@example.com")).toBe(false);
   });
 });

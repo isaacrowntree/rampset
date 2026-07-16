@@ -18,6 +18,8 @@ import { mayWriteAs } from "@/lib/identityGate";
  * Collapse that burst into a single sync. */
 export const MIN_INTERVAL_MS = 10_000;
 
+const UNREACHABLE = "Couldn't reach the sync journal";
+
 /** Module scope, not a ref: every caller must share one in-flight sync. */
 let inFlight: Promise<number> | null = null;
 let lastRunAt = 0;
@@ -34,12 +36,18 @@ export interface SyncDeps {
 export function resetSyncEngine(): void {
   inFlight = null;
   lastRunAt = 0;
-  snapshot = loadPersisted();
+  snapshots.clear();
   listeners.clear();
 }
 
-/** Survives reloads so "last synced" is still true after a cold launch. */
-export const SYNC_STATE_KEY = "liftlog.syncState";
+/** Survives reloads so "last synced" is still true after a cold launch.
+ *
+ * Per-user, like the cursor and the epoch. A single global key meant the
+ * household's other avatar read a "Synced 2 minutes ago" it had no part in —
+ * the one thing this row exists to never do. */
+export function syncStateKey(userId: string): string {
+  return `liftlog.syncState.${userId}`;
+}
 
 export interface SyncState {
   /** When we last reached the journal. Absent = never, on this device. */
@@ -54,23 +62,29 @@ export interface SyncState {
  * getSnapshot MUST return a stable reference between changes or React spins. */
 const listeners = new Set<() => void>();
 
-function loadPersisted(): SyncState {
+function loadPersisted(userId: string): SyncState {
   if (typeof localStorage === "undefined") return {};
   try {
-    return JSON.parse(localStorage.getItem(SYNC_STATE_KEY) ?? "{}") as SyncState;
+    return JSON.parse(localStorage.getItem(syncStateKey(userId)) ?? "{}") as SyncState;
   } catch {
     return {};
   }
 }
 
-let snapshot: SyncState = loadPersisted();
+/** One snapshot per user, cached so the reference is stable between changes. */
+const snapshots = new Map<string, SyncState>();
 
 export function subscribeSyncState(onChange: () => void): () => void {
   listeners.add(onChange);
   return () => listeners.delete(onChange);
 }
 
-export function readSyncState(): SyncState {
+export function readSyncState(userId: string): SyncState {
+  let snapshot = snapshots.get(userId);
+  if (!snapshot) {
+    snapshot = loadPersisted(userId);
+    snapshots.set(userId, snapshot);
+  }
   return snapshot;
 }
 
@@ -80,10 +94,10 @@ export function readServerSyncState(): SyncState {
   return SERVER_SNAPSHOT;
 }
 
-function recordSyncState(next: SyncState): void {
-  snapshot = next;
+function recordSyncState(userId: string, next: SyncState): void {
+  snapshots.set(userId, next);
   try {
-    localStorage.setItem(SYNC_STATE_KEY, JSON.stringify(next));
+    localStorage.setItem(syncStateKey(userId), JSON.stringify(next));
   } catch {
     // private mode — losing the status row is not worth failing a sync over
   }
@@ -107,7 +121,17 @@ export async function syncNow(
 
   // Syncing someone else's avatar under this Access session would file their
   // workouts in our journal — permanently, since the log is append-only.
-  if (!mayWrite(email)) return 0;
+  //
+  // Say so. Returning quietly left the row showing a stale "Synced 2 minutes
+  // ago" for a device that is not syncing and never will until the user
+  // switches back — the exact silence this row exists to break.
+  if (!mayWrite(email)) {
+    recordSyncState(userId, {
+      ...readSyncState(userId),
+      lastError: "Signed in as a different user",
+    });
+    return 0;
+  }
   if (inFlight) return inFlight;
   if (now() - lastRunAt < MIN_INTERVAL_MS) return 0;
   // navigator.onLine is only trustworthy as a negative — a gym dead zone with
@@ -123,17 +147,19 @@ export async function syncNow(
     if (await activeWorkout(userId)) {
       // Mid-workout: a clean push is as synced as we can honestly claim.
       recordSyncState(
+        userId,
         pushed.ok
           ? { lastOkAt: now() }
-          : { ...readSyncState(), lastError: "Couldn't reach the sync journal" },
+          : { ...readSyncState(userId), lastError: UNREACHABLE },
       );
       return 0;
     }
     const pulled = await pull(userId, email);
     recordSyncState(
+      userId,
       pushed.ok && pulled.ok
         ? { lastOkAt: now() }
-        : { ...readSyncState(), lastError: "Couldn't reach the sync journal" },
+        : { ...readSyncState(userId), lastError: UNREACHABLE },
     );
     return pulled.applied;
   })();
