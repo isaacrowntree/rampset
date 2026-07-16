@@ -18,7 +18,7 @@ Everything is test-driven, and the checks that run in CI are the ones to run
 locally before you push:
 
 ```bash
-npm test          # vitest — engines, importers, store, components
+npm test          # vitest — engines, store, sync, components
 npm run typecheck # tsc --noEmit
 npm run lint      # eslint (flat config)
 ```

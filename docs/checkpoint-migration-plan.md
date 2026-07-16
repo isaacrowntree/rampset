@@ -1,3 +1,15 @@
+> **SUPERSEDED — do not follow this. Phases 2–5 are wrong.**
+>
+> Ten review passes took them apart. The premise ("a checkpoint at seq N is
+> canonical if apply is deterministic") is false here: apply is not
+> deterministic, and `seq` is a Lamport clock over a *strict subset* of the
+> state, because program structure is never journalled. Phase 4 would have
+> destroyed every workout edit and the whole program, and propagated the loss
+> back into R2.
+>
+> Kept as a record of a wrong turn — the reasoning in "Why checkpoints" is
+> still the clearest statement of what R2 lacks. See `full-plan.md`.
+
 # Plan: extract sync into `durable-sync`, replace R2-as-authority with checkpoints
 
 Written 2026-07-16, after a full off-Cloudflare backup. The goal is to end up

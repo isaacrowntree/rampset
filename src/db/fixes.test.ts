@@ -13,9 +13,7 @@ import {
   loadLoggedSets,
   nextProgramDay,
 } from "./session";
-import { importIntoStore } from "./importStore";
 import { exportBackup, restoreBackup } from "./backup";
-import { parseStrongLiftsCsv } from "@/lib/importers/stronglifts";
 
 const USER1 = "user-1";
 const USER2 = "user-2";
@@ -26,36 +24,6 @@ beforeEach(async () => {
   await seedIfEmpty();
 });
 
-/* Finding: loose idempotency key silently drops same-day same-label workouts */
-describe("import dedup (two sessions, same day, same label)", () => {
-  const TWO_SAME_DAY = `Date (yyyy/mm/dd),Workout,Workout Name,Program Name,Body Weight (KG),Exercise,SetsxReps,SetsxTime,Top Set Reps x KG,e1RM  (KG),Reps,Volume (KG),Workout Volume (KG),Duration (hours),Start Time (h:mm),End Time (h:mm),Notes,Set 1 (Reps), Set 1 (KG),Set 2 (Reps), Set 2 (KG),Set 3 (Reps), Set 3 (KG),Set 4 (Reps), Set 4 (KG),Set 5 (Reps), Set 5 (KG)
-"2015/05/25","1","Workout A","","87","Squat","5x5","","5x20","24.7","25","500","","1","7:37 PM","8:37 PM","","5","20","5","20","5","20","5","20","5","20"
-"2015/05/25","2","Workout A","","87","Squat","5x5","","5x20","24.7","25","500","","1","9:37 PM","10:37 PM","","5","20","5","20","5","20","5","20","5","20"`;
-
-  it("imports both distinct same-day workouts", async () => {
-    const summary = await importIntoStore(USER1, parseStrongLiftsCsv(TWO_SAME_DAY));
-    expect(summary.workoutsAdded).toBe(2);
-    const workouts = await db.workouts.where({ userId: USER1 }).toArray();
-    expect(workouts).toHaveLength(2);
-  });
-
-  it("stays idempotent on re-import", async () => {
-    await importIntoStore(USER1, parseStrongLiftsCsv(TWO_SAME_DAY));
-    const second = await importIntoStore(USER1, parseStrongLiftsCsv(TWO_SAME_DAY));
-    expect(second.workoutsAdded).toBe(0);
-    expect(second.workoutsSkipped).toBe(2);
-    const workouts = await db.workouts.where({ userId: USER1 }).toArray();
-    expect(workouts).toHaveLength(2);
-  });
-
-  it("orders same-day workouts by their sequence in the export", async () => {
-    await importIntoStore(USER1, parseStrongLiftsCsv(TWO_SAME_DAY));
-    const workouts = await db.workouts.where({ userId: USER1 }).sortBy("startTs");
-    expect(workouts[0].startTs!).toBeLessThan(workouts[1].startTs!);
-  });
-});
-
-/* Finding: extra sets beyond pe.sets void an otherwise successful session */
 describe("progression success with extra back-off sets", () => {
   it("still advances when all prescribed sets hit target plus a partial extra", async () => {
     const dayB = await db.programDays.get("day-5x5-b-user-1");
@@ -361,23 +329,6 @@ describe("stall protocol", () => {
     const pes = await db.programExercises.where({ programDayId: "day-5x5-b-user-1" }).sortBy("position");
     const pullupsPe = pes[3];
     expect(pullupsPe.sets).toBe(3);
-  });
-});
-
-/* End-to-end acceptance: the FULL real export reaches the store intact.
- * Gated on LIFTLOG_SL_EXPORT (see realfiles.test.ts). */
-describe.skipIf(!process.env.LIFTLOG_SL_EXPORT)("real export → store", () => {
-  it("stores every workout from the real StrongLifts file", async () => {
-    const { readFileSync } = await import("node:fs");
-    const parsed = parseStrongLiftsCsv(
-      readFileSync(process.env.LIFTLOG_SL_EXPORT!, "utf8"),
-    );
-    const summary = await importIntoStore(USER1, parsed);
-    expect(summary.workoutsAdded).toBe(parsed.workouts.length);
-    expect(summary.workoutsSkipped).toBe(0);
-    expect(await db.workouts.where({ userId: USER1 }).count()).toBe(
-      parsed.workouts.length,
-    );
   });
 });
 

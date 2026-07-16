@@ -1,3 +1,5 @@
+> **SUPERSEDED by `full-plan.md`.** Its headline fix was harmful — see there.
+
 # Plan v2: fix what's proven, delete what's dead, ship what's built
 
 Supersedes `checkpoint-migration-plan.md` (phases 2–5 are **wrong** — see below).

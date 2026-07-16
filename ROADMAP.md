@@ -3,7 +3,7 @@
 ## Done (v0 → now)
 
 Two-mode engine (program/routine) · plate-circle + Strong-row workout UIs ·
-CSV importers (both dialects, idempotent, real-export verified) · 35 review
+CSV importers (both dialects, idempotent, real-export verified) — REMOVED 2026-07-16, migration complete · 35 review
 findings fixed · graduated comeback deload (2wk −10 / 4wk −20 / 8wk −30) ·
 SL regime alignment (warmup protocol incl. floor pulls + empty-bar sets,
 fail rest 5:00, configurable success rest, deload after 3 fails) · rest

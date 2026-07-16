@@ -75,11 +75,19 @@ Two tests passed for the wrong reason before being fixed:
 
 ## Remaining
 
-- **R2 `latest.json` is still last-writer-wins.** The fix is serialized merge-on-write through the
-  DO (which is already per-identity), not a client-side gate.
+*Updated 2026-07-16. Three of the five below are done; kept struck through so
+the record shows what was predicted versus what shipped.*
+
+- ~~**R2 `latest.json` is still last-writer-wins.**~~ **Done** (#17) — union
+  merge with etag CAS, and the journal's `deleteWorkout` ops as the deletion
+  authority, since union can add but never subtract.
 - **The journal holds 4 ops against ~1275 workouts.** New workouts converge; history does not,
   until a one-time convergence. Bootstrap still depends on R2.
-- **Sync status UI** — last synced, pending count, last error. Every failure path is still silent.
-- **Identity guard** — refuse to sync/backup when the selected avatar's email ≠ the Access email.
-  Today, backing up while switched to another avatar writes their DB to *your* `latest.json`.
+- ~~**Sync status UI**~~ **Done** (#13, #21) — and then twice more, because it
+  was still lying: state was keyed globally while cursor and epoch were
+  per-user, and the identity gate failed silently *and* open.
+- ~~**Identity guard**~~ **Done** (#13, #20) — and the first version had a
+  hole: `finishFlow` reached past it straight to `flushOutbox`, so the gate had
+  to move into `flushOutbox` itself. Now structural: the transport isn't
+  exported from `durable-sync` at all.
 - **Pagination** — `handlePull` has no LIMIT and `flushOutbox` posts every row in one request.

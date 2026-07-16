@@ -47,7 +47,6 @@ subscription, no account to lose, no roadmap that abandons you.
 - **Progress** — estimated 1RM, top set, volume and reps per lift, with a
   personal-record ★ the moment you beat an all-time best; body-weight trend.
 - **History** — a calendar of every session plus recaps.
-- **Import** — StrongLifts and Strong CSV exports (auto-detected, idempotent).
   Export gives everything back.
 - **Offline-first** — IndexedDB on the device is the source of truth; the whole
   app works with no network (gym dead zones, airplane mode), and screen wake-lock
@@ -61,7 +60,7 @@ cd rampset
 npm install
 cp .env.example .env.local     # then edit: your lifters, units, starting weights
 npm run dev                    # → http://localhost:3000
-npm test                       # vitest — the engines, importers, store, components
+npm test                       # vitest — the engines, store, sync, components
 ```
 
 ## Self-host on Cloudflare
