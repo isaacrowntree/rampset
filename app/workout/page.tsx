@@ -20,6 +20,7 @@ import { useRestTimer, RestTimerBar } from "@/components/RestTimer";
 import { ConfirmSheet } from "@/components/ConfirmSheet";
 import { Sheet } from "@/components/Sheet";
 import { useWakeLock } from "@/lib/useWakeLock";
+import { usePullToDismiss } from "@/lib/usePullToDismiss";
 import { activeWorkoutKey } from "@/db/activeWorkout";
 import { completeWorkout } from "@/lib/finishFlow";
 import { sessionTonnageKg, workSetCount } from "@/lib/workoutStats";
@@ -57,6 +58,19 @@ function WorkoutScreen() {
   const [noteDraft, setNoteDraft] = useState("");
   const timer = useRestTimer();
   useWakeLock(session !== null);
+
+  // Pull down from the top to minimize, like Now Playing. Editing a past
+  // workout pulls back to History instead.
+  const screenRef = useRef<HTMLDivElement>(null);
+  usePullToDismiss(
+    screenRef,
+    () => {
+      if (!editId) router.push("/");
+      else if (window.history.length > 1) router.back();
+      else router.replace("/history");
+    },
+    session !== null && !confirmingFinish && !confirmingDiscard && !noteOpen,
+  );
 
   useEffect(() => {
     if (!ready || !user) return;
@@ -231,7 +245,7 @@ function WorkoutScreen() {
 
   return (
     // Bottom room for the rest-timer capsule, so it never sits on Finish.
-    <div className="pb-[calc(env(safe-area-inset-bottom)+132px)]">
+    <div ref={screenRef} className="bg-oled pb-[calc(env(safe-area-inset-bottom)+132px)]">
       <header className="nav-inline sticky top-0 z-40 -mx-4 mb-2 flex items-center gap-1 px-2 pb-1.5 pt-[max(env(safe-area-inset-top),8px)]">
         <button
           onClick={editId ? leaveEdit : minimize}
@@ -280,7 +294,7 @@ function WorkoutScreen() {
               />
               <div
                 role="menu"
-                className="menu-pop glass-strong absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-[18px] py-1"
+                className="menu-pop menu-surface absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-[18px] py-1"
               >
                 <button
                   role="menuitem"
