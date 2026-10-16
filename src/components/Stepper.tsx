@@ -16,27 +16,27 @@ export function Stepper({
   onStep: (dir: -1 | 1) => void;
 }) {
   return (
-    <div className="flex items-center justify-between border-b border-line py-2 last:border-b-0">
-      <span className="text-[14px] text-ink-dim">{label}</span>
+    <div className="flex min-h-[48px] items-center justify-between border-b border-line py-1.5 last:border-b-0">
+      <span className="text-[17px]">{label}</span>
       <span className="flex items-center gap-2.5">
         <button
           aria-label={`Decrease ${label.toLowerCase()} (now ${value})`}
           onClick={() => onStep(-1)}
-          className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-surface-2 text-[19px] text-ink"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-fill text-[22px] font-light text-ink"
         >
           −
         </button>
         <span
           key={display}
           style={{ transform: "translateZ(0)" }}
-          className="mono min-w-[76px] text-right text-[16px] tabular-nums text-ink"
+          className="mono min-w-[72px] text-right text-[17px] font-semibold tabular-nums text-ink"
         >
           {display}
         </span>
         <button
           aria-label={`Increase ${label.toLowerCase()} (now ${value})`}
           onClick={() => onStep(1)}
-          className="flex h-9 w-9 items-center justify-center rounded-full border border-line bg-surface-2 text-[19px] text-ink"
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-fill text-[22px] font-light text-ink"
         >
           +
         </button>

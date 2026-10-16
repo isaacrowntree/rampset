@@ -49,7 +49,8 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    // The inline script below sets data-theme before hydration, on purpose.
+    <html lang="en" suppressHydrationWarning>
       <head>
         {/* Apply the saved skin before first paint — no dark→light flash for
             the light-theme user. Defaults to dark until a user is resolved. */}

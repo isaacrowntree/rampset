@@ -122,7 +122,7 @@ export function SetRow({
         }}
         className={`flex h-10 w-10 items-center justify-center justify-self-end rounded-xl border transition-colors ${
           done
-            ? "border-accent bg-accent text-white"
+            ? "border-accent bg-accent text-on-accent"
             : "border-line bg-surface-2 text-ink-faint"
         }`}
       >

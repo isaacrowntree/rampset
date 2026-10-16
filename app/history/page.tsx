@@ -1,6 +1,8 @@
 "use client";
 
+import { Chevron } from "@/components/Chevron";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
@@ -10,6 +12,7 @@ import { PageSkeleton } from "@/components/PageSkeleton";
 import { getActiveWorkout } from "@/db/activeWorkout";
 import { takeJustFinished, type JustFinished } from "@/lib/justFinished";
 import { Sheet } from "@/components/Sheet";
+import { Celebration } from "@/components/Celebration";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
 import { roundStep } from "@/lib/weightDisplay";
 import { prWorkoutIds } from "@/lib/records";
@@ -134,28 +137,11 @@ export default function HistoryPage() {
     <div className="pb-6">
       <AppHeader title="History" sub={`${data.finished.length.toLocaleString()} workouts`} />
       {celebrate && (
-        <div className="glass mb-4 border-plate-10/40 p-4 motion-safe:animate-[route-in_260ms_ease]">
-          <p className="eyebrow flex items-center gap-1.5 text-plate-10">
-            <span className="h-1.5 w-1.5 rounded-full bg-plate-10" aria-hidden />
-            Workout complete
-          </p>
-          <h2 className="disp mt-1 text-[19px]">Nice work. 💪</h2>
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <div>
-              <div className="eyebrow">Workouts all-time</div>
-              <div className="disp mt-1 text-[22px]">
-                {data.finished.length.toLocaleString()}
-              </div>
-            </div>
-            <div>
-              <div className="eyebrow">Moved this session</div>
-              <div className="disp mt-1 text-[22px]">
-                {Math.round(celebrate.tonnageKg).toLocaleString()}
-                <span className="ml-1 text-[14px] text-ink-dim">kg</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <Celebration
+          tonnageKg={celebrate.tonnageKg}
+          workouts={data.finished.length}
+          pr={data.prWorkouts.has(celebrate.workoutId)}
+        />
       )}
       <Calendar
         trainedDates={data.trainedDates}
@@ -169,10 +155,10 @@ export default function HistoryPage() {
           else setSummaryId(w.id);
         }}
       />
-      <p className="eyebrow mb-2.5 mt-6 px-1">Recent</p>
+      <p className="eyebrow mb-2.5 mt-6 px-4">Recent</p>
       <div className="flex flex-col gap-3">
         {data.active && (
-          <Link href="/workout" className="glass block border-accent/40 p-4 transition-colors active:border-accent">
+          <Link href="/workout" className="glass row block p-4 ring-1 ring-accent/40">
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h2 className="disp truncate text-[15.5px]">{data.active.dayLabel}</h2>
               <span className="mono flex flex-none items-center gap-1.5 text-xs text-plate-10">
@@ -191,7 +177,7 @@ export default function HistoryPage() {
               </div>
             ))}
             <div className="mt-1.5 border-t border-line pt-2 text-[12.5px] font-semibold text-accent">
-              Resume →
+              Resume
             </div>
           </Link>
         )}
@@ -208,8 +194,8 @@ export default function HistoryPage() {
               id={`wk-${w.id}`}
               onClick={() => setEditingId(w.id)}
               aria-label={`Edit ${w.dayLabel} from ${formatDate(w.date)}`}
-              className={`glass block w-full p-4 text-left transition-colors active:border-accent ${
-                flashId === w.id ? "border-accent" : ""
+              className={`glass row block w-full p-4 text-left ${
+                flashId === w.id ? "ring-2 ring-accent" : ""
               }`}
             >
               <div className="mb-2 flex items-baseline justify-between gap-2">
@@ -248,7 +234,7 @@ export default function HistoryPage() {
         })}
         {data.recent.length === 0 && !data.active && (
           <p className="glass p-6 text-center text-sm text-ink-faint">
-            No workouts yet. Start one from Home, or import your history in Settings.
+            No workouts yet. Start one from Home.
           </p>
         )}
         {data.recent.length < data.finished.length && (
@@ -280,6 +266,7 @@ export default function HistoryPage() {
         return (
           <EditWorkoutSheet
             workoutId={w.id}
+            canReopen={w.programDayId !== undefined}
             title={w.dayLabel}
             date={formatDate(w.date)}
             exName={data.exName}
@@ -334,7 +321,7 @@ function WorkoutSummarySheet({
       </div>
       <button
         onClick={onEdit}
-        className="mt-4 w-full rounded-full bg-accent py-3.5 text-[15px] font-semibold text-white"
+        className="mt-4 w-full rounded-full bg-accent py-3.5 text-[15px] font-semibold text-on-accent"
       >
         Edit workout
       </button>
@@ -346,6 +333,7 @@ function WorkoutSummarySheet({
  * after the fact (e.g. Dips logged at 2.5kg was actually −10kg assisted). */
 function EditWorkoutSheet({
   workoutId,
+  canReopen,
   title,
   date,
   exName,
@@ -353,12 +341,19 @@ function EditWorkoutSheet({
   onClose,
 }: {
   workoutId: string;
+  /** Has a program day to rebuild the full workout screen from. */
+  canReopen: boolean;
   title: string;
   date: string;
   exName: Map<string, string>;
   onSaved: () => void;
   onClose: () => void;
 }) {
+  const router = useRouter();
+  // Set before leaving for the workout view, so the sheet doesn't pop the
+  // history entry router.replace just took over (that bounced straight back).
+  const navigatingAway = useRef(false);
+
   // Self-loading by id so any workout opens — including old ones a calendar
   // tap reaches that aren't in the recent list.
   const loaded = useLiveQuery(async () => {
@@ -436,11 +431,25 @@ function EditWorkoutSheet({
   };
 
   return (
-    <Sheet label={`Edit ${title}`} onClose={onClose}>
+    <Sheet label={`Edit ${title}`} onClose={onClose} keepHistoryOnUnmount={navigatingAway}>
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="disp text-[19px]">{title}</h2>
         <span className="mono text-xs text-ink-faint">{date}</span>
       </div>
+      {canReopen && (
+        // The sheet only corrects logged sets; the workout screen can add the
+        // ones that were never logged (a workout finished too early).
+        <button
+          onClick={() => {
+            navigatingAway.current = true;
+            router.replace(`/workout?edit=${workoutId}`);
+          }}
+          className="glass row mb-4 flex min-h-[44px] w-full items-center justify-between px-4 py-3 text-left text-[17px] text-accent"
+        >
+          Edit in workout
+          <Chevron />
+        </button>
+      )}
 
       {groups.map(([exId, exSets]) => {
         const timed = exSets.some((s) => s.seconds != null);
@@ -451,15 +460,13 @@ function EditWorkoutSheet({
               {!timed && (
                 <button
                   aria-pressed={!!assisted[exId]}
-                  aria-label={`${exName.get(exId) ?? "Exercise"}: assisted (machine takes weight off)`}
+                  aria-label={`${exName.get(exId) ?? "Exercise"}: assisted (weight is subtracted)`}
                   onClick={() => setAssisted((p) => ({ ...p, [exId]: !p[exId] }))}
-                  className={`rounded-full border px-2.5 py-0.5 text-[11px] ${
-                    assisted[exId]
-                      ? "border-accent bg-accent-soft text-accent"
-                      : "border-line text-ink-faint"
+                  className={`min-h-[30px] rounded-full px-3 text-[13px] font-medium ${
+                    assisted[exId] ? "bg-accent-soft text-accent" : "bg-fill text-ink-dim"
                   }`}
                 >
-                  assist
+                  Assisted
                 </button>
               )}
             </div>
@@ -550,7 +557,7 @@ function EditWorkoutSheet({
         <button
           onClick={() => void save()}
           disabled={saving}
-          className="flex-1 rounded-full bg-accent py-3.5 text-[15px] font-semibold text-white disabled:opacity-60"
+          className="flex-1 rounded-full bg-accent py-3.5 text-[15px] font-semibold text-on-accent disabled:opacity-60"
         >
           Save changes
         </button>
@@ -650,7 +657,7 @@ function Calendar({
         <button
           aria-label="Previous month"
           onClick={() => go(-1)}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-ink-dim active:bg-white/5"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-ink-dim active:bg-fill"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
             <path d="M15 6l-6 6 6 6" />
@@ -663,7 +670,7 @@ function Calendar({
           aria-label="Next month"
           onClick={() => go(1)}
           disabled={atCurrentMonth}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-ink-dim active:bg-white/5 disabled:opacity-30"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-ink-dim active:bg-fill disabled:opacity-30"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden>
             <path d="M9 6l6 6-6 6" />
@@ -675,7 +682,7 @@ function Calendar({
         className="mono grid grid-cols-7 gap-1 text-center text-[12px] motion-safe:animate-[sheet-backdrop_180ms_ease]"
       >
         {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
-          <span key={i} className="py-1 text-[10px] tracking-widest text-ink-faint">
+          <span key={i} className="py-1 text-[11px] font-semibold text-ink-faint">
             {d}
           </span>
         ))}
@@ -685,7 +692,7 @@ function Calendar({
           const isFuture = c.date > todayStr;
           const trained = trainedDates.has(c.date) && !isFuture;
           const cellClass = `flex flex-col items-center gap-0.5 rounded-lg py-1 ${
-            isToday ? "bg-accent font-semibold text-white" : isFuture ? "text-ink-faint/40" : "text-ink"
+            isToday ? "bg-accent font-semibold text-on-accent" : isFuture ? "text-ink-faint/40" : "text-ink"
           }`;
           const dot = (
             <span
@@ -720,8 +727,8 @@ function Calendar({
       </div>
       <p className="mt-3 border-t border-line pt-2 text-center text-[12px] text-ink-faint">
         {trainedThisMonth === 0
-          ? "No sessions this month"
-          : `${trainedThisMonth} session${trainedThisMonth === 1 ? "" : "s"} this month`}
+          ? "No workouts this month"
+          : `${trainedThisMonth} workout${trainedThisMonth === 1 ? "" : "s"} this month`}
       </p>
     </div>
   );

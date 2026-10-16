@@ -149,7 +149,7 @@ function ExerciseCard({
       )}
 
       <div
-        className={`mono grid gap-2 border-b border-line pb-1 pt-2 text-[10px] uppercase tracking-widest text-ink-faint ${
+        className={`grid gap-2 border-b border-line pb-1 pt-2 text-[12px] font-semibold text-ink-faint ${
           timed || bodyweight
             ? "grid-cols-[28px_1fr_76px_44px]"
             : "grid-cols-[28px_1fr_76px_64px_44px]"

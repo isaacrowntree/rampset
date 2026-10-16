@@ -1,5 +1,7 @@
 "use client";
 
+import { Chevron } from "@/components/Chevron";
+import { Switch } from "@/components/Switch";
 import { useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db, newId } from "@/db/db";
@@ -65,77 +67,84 @@ export default function ProgramPage() {
         title="Program"
         sub={`${program.name} · ${
           program.mode === "progression"
-            ? "auto progression"
+            ? "Automatic progression"
             : program.mode === "madcow"
-              ? "weekly ramped progression"
-              : "last session prefills"
+              ? "Weekly progression"
+              : "Prefilled from last workout"
         }`}
       />
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-6">
         {days.map((day) => {
           const rows = detail.get(day.id) ?? [];
           return (
-            <section key={day.id} className="glass p-4">
-              <h2 className="disp mb-1 text-[15.5px]">{day.name}</h2>
-              <div className="divide-y divide-line/50">
+            <section key={day.id}>
+              <h2 className="eyebrow mb-2 px-4">{day.name}</h2>
+              <div className="glass overflow-hidden">
                 {rows.map(({ pe, ex }) => (
                   <button
                     key={pe.id}
                     onClick={() => setEditingId(pe.id)}
                     aria-label={`Edit ${ex.name}`}
-                    className="flex w-full items-center justify-between gap-3 py-2.5 text-left active:opacity-70"
+                    className="row flex min-h-[44px] w-full items-center justify-between gap-3 border-b border-line px-4 py-3 text-left"
                   >
-                    <span className="min-w-0 truncate text-[14.5px]">{ex.name}</span>
-                    <span className="mono flex-none text-[13px] text-ink-dim">
-                      {rowSummary(pe, ex, program.mode !== "routine")}
-                      <span className="ml-1.5 text-ink-faint">›</span>
+                    <span className="min-w-0 truncate text-[17px]">{ex.name}</span>
+                    <span className="flex flex-none items-center gap-2">
+                      <span className="mono text-[15px] text-ink-dim">
+                        {rowSummary(pe, ex, program.mode !== "routine")}
+                      </span>
+                      <Chevron />
                     </span>
                   </button>
                 ))}
                 {rows.length === 0 && (
-                  <p className="py-2 text-[13px] text-ink-faint">No exercises yet.</p>
+                  <p className="border-b border-line px-4 py-3 text-[15px] text-ink-faint">
+                    No exercises yet.
+                  </p>
                 )}
+                <button
+                  onClick={() => setAddingDayId(day.id)}
+                  className="row flex min-h-[44px] w-full items-center gap-2 px-4 py-3 text-left text-[17px] text-accent"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  Add exercise
+                </button>
               </div>
-              <button
-                onClick={() => setAddingDayId(day.id)}
-                className="mt-2 w-full rounded-xl border border-dashed border-line py-2 text-[13px] font-medium text-ink-dim"
-              >
-                + Add exercise
-              </button>
             </section>
           );
         })}
 
-        <section className="glass p-4">
-          <h2 className="disp mb-1 text-[15.5px]">Progression</h2>
-          <p className="text-[13.5px] leading-relaxed text-ink-dim">
-            {isProgression
-              ? "Weights advance automatically after every successful workout, deload 10% after three fails, and drop 5×5 → 3×5 → 1×5 on repeated stalls. Tap any exercise to change its sets, reps, or starting weight."
-              : "No automatic progression — every set prefills from your last session, and you change the numbers as you go. Tap any exercise to change its sets or reps."}
-          </p>
-          {isProgression && (
-            <label className="mt-3 flex items-center justify-between border-t border-line pt-3">
-              <span>
-                <span className="block text-[14.5px] font-medium">Linked lifts</span>
-                <span className="block text-[12.5px] text-ink-faint">
-                  One chain per exercise: a squat success advances squat on
-                  every day (written-program behavior). Off keeps per-day
-                  weights.
+        <section>
+          <h2 className="eyebrow mb-2 px-4">Progression</h2>
+          <div className="glass overflow-hidden">
+            {isProgression && (
+              <label className="flex min-h-[44px] items-center justify-between gap-3 border-b border-line px-4 py-3">
+                <span>
+                  <span className="block text-[17px]">Linked lifts</span>
+                  <span className="block text-[13px] text-ink-faint">
+                    One chain per exercise: a squat success advances squat on
+                    every day. Off keeps per-day weights.
+                  </span>
                 </span>
-              </span>
-              <input
-                type="checkbox"
-                className="h-6 w-6 accent-[var(--accent)]"
-                checked={program.linkedProgression ?? false}
-                onChange={async (e) => {
-                  await db.programs.update(program.id, {
-                    linkedProgression: e.target.checked,
-                  });
-                  onChanged();
-                }}
-              />
-            </label>
-          )}
+                <Switch
+                  label="Linked lifts"
+                  // The engine links progression-mode programs unless told
+                  // otherwise — the switch must show that default, not "off".
+                  checked={program.linkedProgression ?? program.mode === "progression"}
+                  onChange={async (checked) => {
+                    await db.programs.update(program.id, { linkedProgression: checked });
+                    onChanged();
+                  }}
+                />
+              </label>
+            )}
+            <p className="px-4 py-3 text-[13px] leading-relaxed text-ink-faint">
+              {isProgression
+                ? "Weights go up automatically after every successful workout. After three failed workouts in a row the weight drops 10%, and repeated stalls drop from 5×5 to 3×5, then 1×5. Tap any exercise to change its sets, reps or weight."
+                : "No automatic progression. Every set prefills from your last workout, and you change the numbers as you go. Tap any exercise to change its sets or reps."}
+            </p>
+          </div>
         </section>
       </div>
 
@@ -239,8 +248,8 @@ function ProgramExerciseSheet({
     <Sheet label={`Edit ${ex.name}`} onClose={onClose}>
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="disp text-[19px]">{ex.name}</h2>
-        <button onClick={onClose} className="px-3 py-2 text-sm text-ink-dim">
-          Close
+        <button onClick={onClose} className="-mr-2 px-3 py-2 text-[17px] font-semibold text-accent">
+          Done
         </button>
       </div>
 
@@ -466,7 +475,7 @@ function AddExerciseSheet({
 
       <p className="eyebrow mb-1.5">Create new</p>
       <input
-        className="mb-2 w-full rounded-xl border border-line bg-white/5 px-4 py-3 text-base text-ink placeholder:text-ink-faint"
+        className="mb-2 w-full rounded-[12px] bg-fill px-4 py-3 text-base text-ink placeholder:text-ink-faint"
         autoComplete="off"
         autoCorrect="off"
         enterKeyHint="done"
@@ -494,7 +503,7 @@ function AddExerciseSheet({
       <button
         onClick={() => void createNew()}
         disabled={busy || !name.trim()}
-        className="w-full rounded-full bg-accent py-3.5 text-[15px] font-semibold text-white disabled:opacity-50"
+        className="w-full rounded-full bg-accent py-3.5 text-[15px] font-semibold text-on-accent disabled:opacity-50"
       >
         Add exercise
       </button>

@@ -133,6 +133,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
     document.body.dataset.accent = user?.accent ?? "blue";
     const theme = user?.theme ?? "dark";
     document.documentElement.dataset.theme = theme;
+    // The browser/OS chrome color follows the skin, not just the page.
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", theme === "light" ? "#f2f2f7" : "#000000");
     // Persist so the inline boot script can apply it before first paint on
     // the next launch (no dark→light flash for the light-skin user).
     try {

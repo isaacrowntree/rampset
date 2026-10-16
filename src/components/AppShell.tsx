@@ -29,7 +29,7 @@ function Shell({ children }: { children: ReactNode }) {
           // Workout: no top padding — its sticky header pads for the safe
           // area itself, so padding here would double-count the notch.
           isWorkout ? "pb-6" : "pb-32 pt-[max(env(safe-area-inset-top),12px)]"
-        } pl-[max(env(safe-area-inset-left),16px)] pr-[max(env(safe-area-inset-right),16px)] motion-safe:animate-[route-in_160ms_ease]`}
+        } pl-[max(env(safe-area-inset-left),16px)] pr-[max(env(safe-area-inset-right),16px)]`}
       >
         {children}
       </main>

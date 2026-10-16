@@ -304,20 +304,22 @@ export function RestTimerBar({
       role="status"
       aria-label={running ? `Resting — suggested ${suggestion} seconds` : undefined}
       aria-hidden={!running}
-      className={`fixed inset-x-4 bottom-[max(env(safe-area-inset-bottom),24px)] z-50 mx-auto flex max-w-md items-center gap-3.5 glass-strong px-4 py-3 [transition:transform_300ms,visibility_0s_300ms] ${
+      className={`glass-strong fixed inset-x-3 bottom-[max(env(safe-area-inset-bottom),14px)] z-50 mx-auto flex max-w-md items-center gap-3.5 rounded-[30px] py-2.5 pl-3 pr-2.5 ${
+        overdue ? "rest-over" : ""
+      } ${
         running
-          ? "visible translate-y-0"
-          : "pointer-events-none invisible translate-y-[140%]"
+          ? "visible translate-y-0 [transition:translate_630ms_var(--spring-sheet)]"
+          : "pointer-events-none invisible translate-y-[140%] [transition:translate_300ms_ease-in,visibility_0s_300ms]"
       }`}
     >
-      <svg className="h-11 w-11 flex-none -rotate-90" viewBox="0 0 44 44" aria-hidden>
-        <circle cx="22" cy="22" r="18" fill="none" strokeWidth="4" stroke="#2a2c31" />
+      <svg className="h-12 w-12 flex-none -rotate-90" viewBox="0 0 44 44" aria-hidden>
+        <circle cx="22" cy="22" r="18" fill="none" strokeWidth="4.5" stroke="var(--fill)" />
         <circle
           cx="22"
           cy="22"
           r="18"
           fill="none"
-          strokeWidth="4"
+          strokeWidth="4.5"
           strokeLinecap="round"
           stroke={overdue ? "var(--plate-10)" : "var(--accent)"}
           strokeDasharray={DASH}
@@ -326,21 +328,22 @@ export function RestTimerBar({
         />
       </svg>
       <div className="flex-1" aria-hidden>
-        <div className={`mono text-[19px] font-semibold ${overdue ? "text-plate-10" : ""}`}>
-          {overdue && style === "down" ? "GO" : `${m}:${s}`}
+        {/* Big, rounded digits: readable from the bench at arm's length. */}
+        <div className={`rounded-num text-[30px] leading-[34px] ${overdue ? "text-success" : ""}`}>
+          {overdue && style === "down" ? "Go" : `${m}:${s}`}
         </div>
-        <div className="text-xs text-ink-faint">
+        <div className="text-[13px] text-ink-dim">
           {overdue
-            ? "Rest over — lift"
+            ? "Time for your next set"
             : style === "down"
-              ? "Rest, then next set"
+              ? "Rest before your next set"
               : `Resting · bell at ${fmt(suggestion)}`}
         </div>
       </div>
       <button
         onClick={onDismiss}
         tabIndex={running ? 0 : -1}
-        className="px-4 py-3.5 text-[13px] font-medium text-ink-dim"
+        className="min-h-[44px] rounded-full bg-fill px-4 text-[15px] font-semibold text-ink"
       >
         Dismiss
       </button>

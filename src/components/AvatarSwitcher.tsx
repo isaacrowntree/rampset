@@ -52,7 +52,7 @@ export function AvatarSwitcher({
           <div
             role="menu"
             aria-label="Switch user"
-            className="glass-strong absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-2xl py-1"
+            className="menu-pop glass-strong absolute right-0 top-full z-50 mt-2 w-60 overflow-hidden rounded-[18px] py-1"
           >
             {users.map((u) => {
               const active = u.id === user?.id;

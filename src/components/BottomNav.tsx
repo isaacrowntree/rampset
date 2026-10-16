@@ -82,7 +82,7 @@ export function BottomNav() {
               <Icon filled={active} />
             </span>
             <span
-              className={`overflow-hidden transition-[height,opacity,margin-top,transform] duration-300 ${
+              className={`overflow-hidden transition-[height,opacity,margin-top,scale] duration-300 ${
                 minimized ? "mt-0 h-0 scale-75 opacity-0" : "mt-0.5 h-[13px] opacity-100"
               }`}
             >

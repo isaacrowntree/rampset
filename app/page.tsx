@@ -15,6 +15,9 @@ import {
 } from "@/lib/deload";
 import { getActiveWorkout } from "@/db/activeWorkout";
 import type { ProgramDay, ProgramExercise, Exercise } from "@/lib/types";
+import { PlateDiagram } from "@/components/PlateDiagram";
+import { loadColor } from "@/lib/plates";
+import { useGymPlates } from "@/lib/gymPlates";
 
 export default function HomePage() {
   const { user } = useUser();
@@ -101,7 +104,7 @@ export default function HomePage() {
         deloadOffered &&
         !deloadTaken &&
         !active && (
-        <div className="mb-4 flex items-center gap-3.5 glass border-plate-15/40 p-4">
+        <div className="mb-4 flex items-center gap-3.5 glass p-4 ring-1 ring-plate-15/40">
           <p className="flex-1 text-[13.5px] leading-snug text-ink-dim">
             <strong className="font-semibold text-ink">
               {formatGap(daysSince)} since your last workout.
@@ -120,20 +123,20 @@ export default function HomePage() {
         <div className="mb-4 glass p-4">
           <p className="text-[13.5px] leading-snug text-ink-dim">
             <strong className="font-semibold text-ink">Welcome back.</strong>{" "}
-            Last session was {formatGap(daysSince)} ago — your numbers are saved.
+            Your last workout was {formatGap(daysSince)} ago — your numbers are saved.
           </p>
         </div>
       )}
 
       {active && (
         <>
-          <p className="eyebrow mb-2.5 mt-5 flex items-center gap-1.5 px-1">
+          <p className="eyebrow mb-2.5 mt-5 flex items-center gap-1.5 px-4">
             <span className="h-1.5 w-1.5 rounded-full bg-plate-10 motion-safe:animate-pulse" aria-hidden />
             In progress
           </p>
           <Link
             href="/workout"
-            className="glass block border-accent/40 p-4 transition-colors active:border-accent"
+            className="glass row block p-4 ring-1 ring-accent/40"
           >
             <div className="flex items-baseline justify-between gap-2">
               <h2 className="disp truncate text-[16px]">{active.dayLabel}</h2>
@@ -147,104 +150,144 @@ export default function HomePage() {
                   ? "No sets logged yet"
                   : `${activeSetCount} set${activeSetCount === 1 ? "" : "s"} logged`}
               </span>
-              <span className="text-[13.5px] font-semibold text-accent">Resume →</span>
+              <span className="text-[15px] font-semibold text-accent">Resume</span>
             </div>
           </Link>
         </>
       )}
 
-      <p className="eyebrow mb-2.5 mt-5 px-1">
-        Up next · {program.name}
-        <span className="mono ml-2 rounded-full border border-line px-2 py-0.5 text-[10px] normal-case tracking-normal text-ink-dim">
-          {program.mode === "progression" ? "program" : program.mode === "madcow" ? "madcow" : "routine"}
-        </span>
-      </p>
-
-      {/* Room for the floating CTA + dock so the last card can scroll clear. */}
-      <div className="flex flex-col gap-3 pb-44">
-        {upcoming.map((day, i) => (
-          <DayCard
-            key={`${day.id}-${i}`}
-            day={day}
-            rows={detail.get(day.id) ?? []}
-            // Any day can be started, not just the suggested one — otherwise
-            // the only route to Workout B is finishing Workout A, which is
-            // what drives people to log a junk set just to move the program on.
-            // While a workout runs, cards go preview-only: tapping one would
-            // silently close out the in-progress workout.
+      {upcoming[0] && (
+        <>
+          <h2 className="eyebrow mb-2 mt-6 px-4">Next workout</h2>
+          <NextCard
+            day={upcoming[0]}
+            rows={detail.get(upcoming[0].id) ?? []}
             startable={!active}
-            highlight={i === 0 && !active}
-            when={i === 0 ? "next" : "later"}
           />
-        ))}
-      </div>
+        </>
+      )}
 
-      {/* Scrim so list content dissolves into the background beneath the
-          floating CTA + dock instead of colliding with them (theme-aware via
-          --oled). */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-x-0 bottom-0 z-20 h-40 bg-gradient-to-t from-oled via-oled/85 to-transparent"
-      />
-
-      {/* Sits a fixed gap ABOVE the dock: same safe-area anchor as the nav
-          plus the dock's height, so it never lands on the tab bar. */}
-      <Link
-        href="/workout"
-        className="fixed inset-x-4 bottom-[calc(max(env(safe-area-inset-bottom),12px)+5.5rem)] z-30 mx-auto block max-w-md rounded-full bg-accent py-4 text-center text-base font-semibold text-white shadow-[0_10px_36px_var(--accent-glow),inset_0_1px_0_rgba(255,255,255,0.35)]"
-      >
-        {active ? "Resume workout" : "Start workout"}
-      </Link>
+      {upcoming.length > 1 && (
+        <>
+          <h2 className="eyebrow mb-2 mt-7 px-4">Coming up · {program.name}</h2>
+          {/* Any day can be started, not just the suggested one — otherwise
+              the only route to Workout B is finishing Workout A, which is what
+              drives people to log a junk set just to move the program on.
+              While a workout runs, rows go preview-only: tapping one would
+              silently close out the in-progress workout. */}
+          <div className="glass overflow-hidden">
+            {upcoming.slice(1).map((day, i) => (
+              <LaterRow
+                key={`${day.id}-${i}`}
+                day={day}
+                rows={detail.get(day.id) ?? []}
+                startable={!active}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function DayCard({
+/** The suggested next session — the one place the app gets loud: the bar
+ * loaded for its heaviest lift, washed in that plate's color. */
+function NextCard({
   day,
   rows,
   startable,
-  highlight,
-  when,
 }: {
   day: ProgramDay;
   rows: { pe: ProgramExercise; ex: Exercise }[];
-  /** Tapping starts this day. Separate from `highlight`: the program
-   * SUGGESTS an order, it doesn't impose one — any day can be started. */
   startable: boolean;
-  /** Visual emphasis for the day the program suggests next. */
-  highlight: boolean;
-  when: string;
 }) {
-  const shown = rows.slice(0, 3);
-  const extra = rows.length - shown.length;
+  const heaviest = rows
+    .filter(({ ex, pe }) => ex.kind === "weighted" && (pe.workingWeightKg ?? 0) >= 20)
+    .sort((a, b) => (b.pe.workingWeightKg ?? 0) - (a.pe.workingWeightKg ?? 0))[0];
+  const gymPlates = useGymPlates();
+  const tone = loadColor(heaviest?.pe.workingWeightKg, 20, gymPlates);
+
+  return (
+    <section
+      className="glass relative overflow-hidden p-5"
+      style={
+        tone
+          ? {
+              backgroundImage: `radial-gradient(120% 70% at 85% -10%, color-mix(in srgb, ${tone.fill} 30%, transparent), transparent 65%)`,
+            }
+          : undefined
+      }
+    >
+      <h3 className="large-title !text-[28px] !leading-[34px]">{day.name}</h3>
+      <p className="mt-0.5 text-[15px] text-ink-dim">
+        {rows.length} exercise{rows.length === 1 ? "" : "s"}
+        {heaviest ? ` · ${heaviest.ex.name} ${heaviest.pe.workingWeightKg}kg` : ""}
+      </p>
+
+      {heaviest && (
+        <div className="-mx-1 mt-4">
+          <PlateDiagram totalKg={heaviest.pe.workingWeightKg!} />
+        </div>
+      )}
+
+      <ul className="mt-4 divide-y divide-line">
+        {rows.map(({ pe, ex }) => (
+          <li key={pe.id} className="flex items-center justify-between gap-3 py-2.5">
+            <span className="flex min-w-0 items-center gap-2.5">
+              <span
+                aria-hidden
+                className="h-2.5 w-2.5 flex-none rounded-full"
+                style={{ background: loadColor(pe.workingWeightKg, 20, gymPlates)?.fill ?? "var(--surface-3)" }}
+              />
+              <span className="truncate text-[16px]">{ex.name}</span>
+            </span>
+            <span className="mono flex-none text-[15px] text-ink-dim">{targetLabel(pe)}</span>
+          </li>
+        ))}
+      </ul>
+
+      {startable && (
+        <Link
+          href={`/workout?day=${day.id}`}
+          className="mt-4 block rounded-full bg-accent py-3.5 text-center text-[17px] font-semibold text-on-accent shadow-[0_8px_28px_-6px_var(--accent-glow)]"
+        >
+          Start {day.name}
+        </Link>
+      )}
+    </section>
+  );
+}
+
+/** A later day in the rotation, as an inset-grouped row. */
+function LaterRow({
+  day,
+  rows,
+  startable,
+}: {
+  day: ProgramDay;
+  rows: { pe: ProgramExercise; ex: Exercise }[];
+  startable: boolean;
+}) {
   const inner = (
     <>
-      <div className="mb-2.5 flex items-baseline justify-between gap-2">
-        <h2 className="disp truncate text-[16px]">{day.name}</h2>
-        <span className="mono flex-none text-xs text-ink-faint">{when}</span>
-      </div>
-      {shown.map(({ pe, ex }) => (
-        <div key={pe.id} className="flex items-baseline justify-between py-1.5">
-          <span className="text-[14.5px] text-ink">{ex.name}</span>
-          <span className="mono text-[13px] text-ink-dim">
-            {targetLabel(pe)}
-          </span>
-        </div>
-      ))}
-      {extra > 0 && (
-        <div className="mt-1.5 border-t border-line pt-2 text-[12.5px] text-ink-faint">
-          + {extra} more exercise{extra === 1 ? "" : "s"}
-        </div>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[17px]">{day.name}</span>
+        <span className="block truncate text-[13px] text-ink-faint">
+          {rows.map(({ ex }) => ex.name).join(", ")}
+        </span>
+      </span>
+      {startable && (
+        <svg width="8" height="14" viewBox="0 0 8 14" fill="none" stroke="currentColor" strokeWidth="2" className="flex-none text-ink-faint" aria-hidden>
+          <path d="M1 1l6 6-6 6" />
+        </svg>
       )}
     </>
   );
-
-  const className = `glass p-4${highlight ? "" : " opacity-80"}${
-    startable ? " transition-colors active:border-accent" : ""
-  }`;
-
+  const className =
+    "row flex min-h-[60px] items-center gap-3 border-b border-line px-4 py-2.5 last:border-b-0";
   return startable ? (
-    <Link href={`/workout?day=${day.id}`} className={className}>
+    <Link href={`/workout?day=${day.id}`} className={className} aria-label={`Start ${day.name}`}>
       {inner}
     </Link>
   ) : (

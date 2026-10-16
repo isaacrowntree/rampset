@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { SwipeBack } from "@/components/SwipeBack";
 import { useParams } from "next/navigation";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
@@ -82,6 +83,7 @@ export default function ExerciseProgressPage() {
   const metrics = METRICS[exercise.kind];
 
   return (
+    <SwipeBack fallbackHref="/progress">
     <div className="pb-8">
       <DetailHeader name={exercise.name} />
 
@@ -124,23 +126,27 @@ export default function ExerciseProgressPage() {
         </>
       )}
     </div>
+    </SwipeBack>
   );
 }
 
 function DetailHeader({ name }: { name: string }) {
   return (
-    <header className="mb-4 flex items-center gap-1 pt-2">
+    <>
+    <header className="flex items-center pt-1">
       <Link
         href="/progress"
         aria-label="Back to Progress"
-        className="-ml-2 flex h-10 w-10 flex-none items-center justify-center text-ink-dim"
+        className="row -ml-2 flex min-h-[44px] items-center gap-0.5 rounded-lg pr-2 text-[17px] text-accent"
       >
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M15 18l-6-6 6-6" />
         </svg>
+        Progress
       </Link>
-      <h1 className="disp truncate text-[21px]">{name}</h1>
     </header>
+    <h1 className="large-title mb-4 truncate">{name}</h1>
+    </>
   );
 }
 

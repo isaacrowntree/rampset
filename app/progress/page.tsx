@@ -1,5 +1,6 @@
 "use client";
 
+import { Chevron } from "@/components/Chevron";
 import Link from "next/link";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
@@ -86,6 +87,8 @@ export default function ProgressPage() {
     <div className="pb-8">
       <AppHeader title="Progress" sub={`${data.trends.length} exercises tracked`} />
 
+      {(data.bw.length > 1 || data.trends.length > 0) && (
+      <div className="glass divide-y divide-line overflow-hidden">
       {data.bw.length > 1 && (
         <Row
           name="Body weight"
@@ -96,12 +99,11 @@ export default function ProgressPage() {
         />
       )}
 
-      <div className="divide-y divide-line">
         {data.trends.map((t) => (
           <Link
             key={t.id}
             href={`/progress/${t.id}`}
-            className="block transition-opacity active:opacity-60"
+            className="row block"
           >
             <Row
               name={t.name}
@@ -115,10 +117,11 @@ export default function ProgressPage() {
           </Link>
         ))}
       </div>
+      )}
 
       {data.trends.length === 0 && (
         <p className="glass p-6 text-center text-sm text-ink-faint">
-          Charts appear after your first workout — or import your history in Settings.
+          Charts appear after your first workout.
         </p>
       )}
     </div>
@@ -148,9 +151,9 @@ function Row({
   const delta = deltaLabel(summary, unit);
 
   return (
-    <div className="flex items-center gap-3 py-3.5">
+    <div className="flex min-h-[44px] items-center gap-3 px-4 py-3">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-[15px] font-medium">
+        <div className="flex items-center gap-1.5 text-[17px]">
           <span className="truncate">{name}</span>
           {isPR && (
             <span
@@ -162,14 +165,14 @@ function Row({
             </span>
           )}
         </div>
-        <div className="mono text-[12.5px] text-ink-faint">{sub}</div>
+        <div className="mono text-[13px] text-ink-faint">{sub}</div>
       </div>
       {summary.meaningful ? (
         <div className="flex flex-none items-center gap-2.5">
           {delta && (
             <span
-              className={`mono text-[11px] ${
-                summary.delta > 0 ? "text-plate-10" : "text-ink-faint"
+              className={`mono text-[13px] ${
+                summary.delta > 0 ? "text-success" : "text-ink-faint"
               }`}
             >
               {delta}
@@ -178,24 +181,11 @@ function Row({
           <Sparkline points={points} color={color} />
         </div>
       ) : (
-        <span className="mono flex-none text-right text-[11px] text-ink-faint">
-          {summary.hasHistory ? "steady" : "1 session"}
+        <span className="flex-none text-right text-[13px] text-ink-faint">
+          {summary.hasHistory ? "No change" : "1 workout"}
         </span>
       )}
-      {chevron && (
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          className="flex-none text-ink-faint"
-          aria-hidden
-        >
-          <path d="M9 6l6 6-6 6" />
-        </svg>
-      )}
+      {chevron && <Chevron />}
     </div>
   );
 }
@@ -256,5 +246,6 @@ function currentLabel(byWorkout: Map<string, SetEntry[]>, kind: string): string 
   const top = last.reduce((a, b) => ((a.weightKg ?? 0) >= (b.weightKg ?? 0) ? a : b));
   const w = top.weightKg ?? 0;
   const r = top.reps ?? 0;
-  return r > 0 ? `${w}kg × ${r} · e1RM ${epley(w, r)}` : `${w}kg`;
+  // An estimated 1RM means nothing for an assisted (negative) lift.
+  return r > 0 && w > 0 ? `${w}kg × ${r} · est. 1RM ${epley(w, r)}` : r > 0 ? `${w}kg × ${r}` : `${w}kg`;
 }

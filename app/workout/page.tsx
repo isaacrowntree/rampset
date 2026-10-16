@@ -8,6 +8,8 @@ import {
   startWorkout,
   buildSessionPlan,
   setWorkoutNote,
+  saveFinishedWorkout,
+  buildEditSession,
   type Session,
 } from "@/db/session";
 import { db } from "@/db/db";
@@ -21,6 +23,7 @@ import { useWakeLock } from "@/lib/useWakeLock";
 import { activeWorkoutKey } from "@/db/activeWorkout";
 import { completeWorkout } from "@/lib/finishFlow";
 import { sessionTonnageKg, workSetCount } from "@/lib/workoutStats";
+import { scheduleBackup } from "@/lib/backupAfterEdit";
 
 export default function WorkoutPage() {
   return (
@@ -35,6 +38,9 @@ function WorkoutScreen() {
   const router = useRouter();
   const params = useSearchParams();
   const requestedDay = params.get("day");
+  // A finished workout reopened from History: same screen, but it stays
+  // finished — Save replaces Finish, and nothing touches the active pointer.
+  const editId = params.get("edit");
   const [session, setSession] = useState<Session | null>(null);
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const [confirmingFinish, setConfirmingFinish] = useState<{
@@ -56,6 +62,23 @@ function WorkoutScreen() {
     if (!ready || !user) return;
     let cancelled = false;
     (async () => {
+      if (editId) {
+        const past = await db.workouts.get(editId);
+        if (
+          !past ||
+          past.userId !== user.id ||
+          past.endTs === undefined ||
+          !past.programDayId ||
+          !(await db.programDays.get(past.programDayId))
+        ) {
+          router.replace("/history");
+          return;
+        }
+        const s = await buildEditSession(past);
+        if (!cancelled) setSession(s);
+        return;
+      }
+
       const storageKey = activeWorkoutKey(user.id);
       const activeId = localStorage.getItem(storageKey);
       const active = activeId ? await db.workouts.get(activeId) : undefined;
@@ -88,7 +111,7 @@ function WorkoutScreen() {
     return () => {
       cancelled = true;
     };
-  }, [ready, user, requestedDay, router]);
+  }, [ready, user, requestedDay, editId, router]);
 
   if (!user || !session) {
     return (
@@ -131,6 +154,29 @@ function WorkoutScreen() {
       finishing.current = false;
       setConfirmingFinish(null);
     }
+  };
+
+  /** Edit mode's Finish: the sets are already saved as they're logged, so
+   * this just settles progression and backs up. */
+  const saveEdit = async () => {
+    if (finishing.current) return;
+    finishing.current = true;
+    // No timer.stop(): edit mode never starts one, and the rest running is
+    // the in-progress workout's, not this one's.
+    try {
+      await saveFinishedWorkout(session.workout.id);
+      scheduleBackup(user.id, user.email);
+      navigatingAway.current = true;
+      router.replace("/history");
+    } finally {
+      finishing.current = false;
+    }
+  };
+
+  /** Logging a set starts the rest — except when correcting a past workout:
+   * the timer is global, and would clobber a live workout's rest. */
+  const rest = (style: "up" | "down") => (seconds: number) => {
+    if (!editId) timer.start(seconds, style);
   };
 
   /** Minimize keeps everything — including an active rest countdown. */
@@ -177,12 +223,15 @@ function WorkoutScreen() {
   };
 
   return (
-    <div className="pb-32">
-      <header className="glass-strong rounded-none sticky top-0 z-40 -mx-4 mb-2 flex items-center gap-1 px-2 pb-2 pt-[max(env(safe-area-inset-top),8px)]">
+    // Bottom room for the rest-timer capsule, so it never sits on Finish.
+    <div className="pb-[calc(env(safe-area-inset-bottom)+132px)]">
+      <header className="nav-inline sticky top-0 z-40 -mx-4 mb-2 flex items-center gap-1 px-2 pb-1.5 pt-[max(env(safe-area-inset-top),8px)]">
         <button
-          onClick={minimize}
-          aria-label="Minimize workout — your progress is kept"
-          className="flex h-10 w-10 flex-none items-center justify-center text-ink-dim"
+          onClick={editId ? () => router.replace("/history") : minimize}
+          aria-label={
+            editId ? "Back — logged changes are kept" : "Minimize workout — your progress is kept"
+          }
+          className="flex h-11 w-11 flex-none items-center justify-center text-accent"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
             <path d="M6 9l6 6 6-6" />
@@ -190,8 +239,14 @@ function WorkoutScreen() {
         </button>
 
         <div className="min-w-0 flex-1 text-center">
-          <div className="disp truncate text-[15px] leading-tight">{session.day.name}</div>
-          <ElapsedClock startTs={session.workout.startTs} />
+          <div className="truncate text-[17px] font-semibold leading-tight">{session.day.name}</div>
+          {editId ? (
+            <div className="text-[13px] leading-tight text-ink-dim">
+              Editing · {formatDate(session.workout.date)}
+            </div>
+          ) : (
+            <ElapsedClock startTs={session.workout.startTs} />
+          )}
         </div>
 
         <div className="relative flex flex-none items-center">
@@ -200,7 +255,7 @@ function WorkoutScreen() {
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((o) => !o)}
-            className="flex h-10 w-10 items-center justify-center text-ink-dim"
+            className="flex h-11 w-11 items-center justify-center text-accent"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
               <circle cx="5" cy="12" r="1.9" />
@@ -218,7 +273,7 @@ function WorkoutScreen() {
               />
               <div
                 role="menu"
-                className="glass-strong absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-2xl py-1"
+                className="menu-pop glass-strong absolute right-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-[18px] py-1"
               >
                 <button
                   role="menuitem"
@@ -226,14 +281,18 @@ function WorkoutScreen() {
                     setMenuOpen(false);
                     openNote();
                   }}
-                  className="flex w-full items-center gap-2.5 border-b border-line px-4 py-3 text-left text-[14px] font-medium text-ink"
+                  className={`flex w-full items-center gap-2.5 px-4 py-3 text-left text-[14px] font-medium text-ink ${
+                    editId ? "" : "border-b border-line"
+                  }`}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
                     <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
                   </svg>
                   {session.workout.notes ? "Edit note" : "Workout note"}
                 </button>
-                <button
+                {/* A finished workout is synced history — deleting it isn't
+                    a discard, so edit mode doesn't offer one. */}
+                {!editId && <button
                   role="menuitem"
                   onClick={() => {
                     setMenuOpen(false);
@@ -245,7 +304,7 @@ function WorkoutScreen() {
                     <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13" />
                   </svg>
                   Discard workout
-                </button>
+                </button>}
               </div>
             </>
           )}
@@ -270,24 +329,26 @@ function WorkoutScreen() {
         // SL-style: count up from the set, bell at the suggestion.
         <ProgressionWorkout
           session={session}
-          onSetDone={(s) => timer.start(s, "up")}
+          onSetDone={rest("up")}
           onProgramChange={() => void refreshPlan()}
+          // A past workout edits its own sets, not the live program.
+          programLocked={editId !== null}
         />
       ) : session.mode === "madcow" ? (
         // Ramp checklist: prescribed climb, count down the exercise's rest.
-        <MadcowWorkout session={session} onSetDone={(s) => timer.start(s, "down")} />
+        <MadcowWorkout session={session} onSetDone={rest("down")} />
       ) : (
         // Strong-style: count down the exercise's rest, done at zero.
-        <RoutineWorkout session={session} onSetDone={(s) => timer.start(s, "down")} />
+        <RoutineWorkout session={session} onSetDone={rest("down")} />
       )}
 
       {/* Primary action lives at the end of the set list — finish once the
           last set is logged, rather than reaching for the header. */}
       <button
-        onClick={askFinish}
-        className="mt-8 block w-full rounded-full bg-plate-10 py-4 text-center text-base font-semibold text-black shadow-[0_10px_36px_rgba(52,201,121,0.3),inset_0_1px_0_rgba(255,255,255,0.35)] transition-transform active:scale-[.99]"
+        onClick={editId ? () => void saveEdit() : askFinish}
+        className="mt-8 block w-full rounded-full bg-plate-10 py-3.5 text-center text-[17px] font-semibold text-black"
       >
-        Finish workout
+        {editId ? "Save workout" : "Finish workout"}
       </button>
 
       {confirmingFinish && (
@@ -295,16 +356,16 @@ function WorkoutScreen() {
           title="Finish workout?"
           body={
             confirmingFinish.workSets === 0
-              ? "No sets logged — this workout won't be saved."
+              ? "You haven’t logged any sets, so this workout won’t be saved."
               : `${confirmingFinish.workSets} set${
                   confirmingFinish.workSets === 1 ? "" : "s"
                 } logged${
                   confirmingFinish.tonnageKg > 0
                     ? ` · ${Math.round(confirmingFinish.tonnageKg).toLocaleString()}kg moved`
                     : ""
-                }. This wraps up ${session.day.name}.`
+                }. ${session.day.name} will be saved to History.`
           }
-          confirmLabel={confirmingFinish.workSets === 0 ? "Finish anyway" : "Finish workout"}
+          confirmLabel={confirmingFinish.workSets === 0 ? "Discard workout" : "Finish workout"}
           tone={confirmingFinish.workSets === 0 ? "danger" : "positive"}
           keepHistoryOnUnmount={navigatingAway}
           onConfirm={() =>
@@ -335,7 +396,7 @@ function WorkoutScreen() {
               onChange={(e) => setNoteDraft(e.target.value)}
               placeholder="How did it go? Bar speed, aches, PRs, what to change next time…"
               rows={4}
-              className="w-full resize-none rounded-2xl border border-line bg-white/5 p-3.5 text-[16px] leading-snug text-ink outline-none placeholder:text-ink-faint focus:border-accent"
+              className="w-full resize-none rounded-[12px] bg-fill p-3.5 text-[16px] leading-snug text-ink outline-none placeholder:text-ink-faint focus:ring-2 focus:ring-accent"
             />
             <div className="mt-4 flex gap-3">
               <button
@@ -346,7 +407,7 @@ function WorkoutScreen() {
               </button>
               <button
                 onClick={() => void saveNote()}
-                className="flex-1 rounded-full bg-accent py-3.5 text-[15px] font-semibold text-white"
+                className="flex-1 rounded-full bg-accent py-3.5 text-[15px] font-semibold text-on-accent"
               >
                 Save note
               </button>
@@ -355,7 +416,8 @@ function WorkoutScreen() {
         </Sheet>
       )}
 
-      <RestTimerBar {...timer} onDismiss={timer.stop} />
+      {/* The running rest belongs to the live workout, not a past one. */}
+      {!editId && <RestTimerBar {...timer} onDismiss={timer.stop} />}
     </div>
   );
 }
@@ -376,5 +438,14 @@ function ElapsedClock({ startTs }: { startTs?: number }) {
     h > 0
       ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
       : `${m}:${String(sec).padStart(2, "0")}`;
-  return <div className="mono text-[11px] leading-tight text-ink-faint">{label}</div>;
+  // Readable from the bench: rounded tabular digits, not a footnote.
+  return <div className="rounded-num text-[13px] leading-tight text-ink-dim">{label}</div>;
+}
+
+function formatDate(date: string): string {
+  return new Date(`${date}T12:00:00`).toLocaleDateString("en-AU", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
 }

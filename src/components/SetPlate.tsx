@@ -1,7 +1,22 @@
 "use client";
 
 /** Program mode's signature control: a set drawn as a weight plate.
- * Tap: empty → full target → decrement → 0 → empty. */
+ * Tap: empty → full target → decrement → 0 → empty.
+ *
+ * A finished set fills in the color of the heaviest plate on the bar, so a
+ * session reads like the loaded bar does from across the gym. Outcome is
+ * carried by SHAPE, not hue (plate red/yellow already mean 25/15kg):
+ *   empty   — quiet ring, target shown dimly
+ *   done    — solid plate, rim and sheen
+ *   partial — ring in the plate color, reps inside
+ *   zero    — dashed ring */
+
+import { useState, type CSSProperties } from "react";
+
+export interface PlateTone {
+  fill: string;
+  ink: string;
+}
 
 export function SetPlate({
   target,
@@ -9,6 +24,8 @@ export function SetPlate({
   onChange,
   size,
   bonus = false,
+  tone,
+  upNext = false,
 }: {
   target: number;
   /** null = not attempted; otherwise reps done. */
@@ -19,63 +36,64 @@ export function SetPlate({
   /** An extra set added beyond the prescription — marked so it doesn't read
    * as a missing prescribed set. */
   bonus?: boolean;
+  /** The load's plate color; omit (bodyweight, light loads) for the accent. */
+  tone?: PlateTone | null;
+  /** The set to do next — gets a ring, so a glance from the bench finds it. */
+  upNext?: boolean;
 }) {
   const next = value === null ? target : value === 0 ? null : value - 1;
+  // Only a plate tapped in this mount animates — returning to the workout
+  // tab mustn't replay a pop on every set already done.
+  const [tapped, setTapped] = useState(false);
 
   const state =
     value === null
       ? "empty"
-      : value === target
+      : value >= target
         ? "done"
         : value === 0
           ? "zero"
           : "partial";
-
-  const border =
-    state === "done"
-      ? "border-accent"
-      : state === "partial"
-        ? "border-plate-15"
-        : state === "zero"
-          ? "border-plate-25"
-          : // Empty bonus set: dashed, so it reads as "extra / removable"
-            // rather than a prescribed set you forgot to log.
-            bonus
-            ? "border-dashed border-accent/40"
-            : "border-[#2E3036]";
-  const bg =
-    state === "done"
-      ? "bg-accent-soft"
-      : state === "partial"
-        ? "bg-[rgba(242,194,27,0.10)]"
-        : state === "zero"
-          ? "bg-[rgba(232,67,63,0.10)]"
-          : "bg-black";
-  const ink = state === "empty" ? "text-ink-dim" : "text-ink";
 
   const label =
     value === null
       ? `${bonus ? "Bonus set" : "Set"} pending, ${target} reps target. Tap to log all reps.`
       : `${value} of ${target} reps logged. Tap to change.`;
 
+  const style = {
+    "--plate-fill": tone?.fill ?? "var(--accent)",
+    "--plate-ink": tone?.ink ?? "var(--on-accent)",
+    ...(size !== undefined ? { width: size, height: size } : {}),
+  } as CSSProperties;
+
   return (
     <button
       aria-label={label}
+      data-state={state}
+      data-bonus={bonus || undefined}
+      data-anim={tapped || undefined}
+      data-next={(upNext && value === null) || undefined}
       onClick={() => {
+        setTapped(true);
         // Native-feel haptic tick on the core interaction.
         if (typeof navigator !== "undefined") navigator.vibrate?.(10);
         onChange(next);
       }}
-      style={size !== undefined ? { width: size, height: size } : undefined}
-      className={`disp flex flex-none items-center justify-center rounded-full border-4 text-[17px] transition-transform active:scale-90 ${
+      style={style}
+      className={`set-plate disp flex flex-none items-baseline justify-center rounded-full pt-[0.1em] text-[19px] ${
         size === undefined ? "aspect-square w-full" : ""
-      } ${border} ${bg} ${ink}`}
+      }`}
     >
-      {value === null ? (
-        <span className="opacity-70">{target}</span>
-      ) : (
-        value
-      )}
+      {/* Line-height trick: baseline-align the reps with a small "/5" so a
+          short set says so in words, not only by its ring. */}
+      <span className="self-center">
+        {value === null ? target : value}
+        {state === "partial" && (
+          <span aria-hidden className="text-[11px] font-semibold opacity-70">
+            /{target}
+          </span>
+        )}
+      </span>
     </button>
   );
 }

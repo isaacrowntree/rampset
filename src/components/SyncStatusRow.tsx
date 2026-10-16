@@ -97,7 +97,7 @@ export function SyncStatusRow() {
   const { label, detail, tone } = summarise(state, pending, now);
 
   return (
-    <div className="flex w-full items-center justify-between border-b border-line px-4 py-3.5 text-left">
+    <div className="flex w-full items-center justify-between border-b border-line px-4 py-3.5 text-left last:border-b-0">
       <div>
         <div className="text-[15px] font-medium">{label}</div>
         <div className="text-[12.5px] text-ink-faint">{detail}</div>

@@ -14,11 +14,13 @@ import { logSet, clearSet } from "@/db/session";
 import { useUser } from "@/state/UserContext";
 import { SetPlate } from "../SetPlate";
 import { PlateDiagram } from "../PlateDiagram";
-import { platesPerSide } from "@/lib/plates";
+import { platesPerSide, loadColor } from "@/lib/plates";
+import { useGymPlates } from "@/lib/gymPlates";
 import { roundStep, fmtWeight } from "@/lib/weightDisplay";
 import { Stepper } from "../Stepper";
 import { BodyWeightField } from "../BodyWeightField";
 import { Sheet } from "../Sheet";
+import { SegmentedControl } from "../SegmentedControl";
 
 /** Rest after a failed set (missed reps) — 5 minutes, per SL guidance
  * (1:30 easy · 3:00 hard · 5:00 failed). */
@@ -30,10 +32,14 @@ export function ProgressionWorkout({
   session,
   onSetDone,
   onProgramChange,
+  programLocked = false,
 }: {
   session: Session;
   onSetDone: (restSeconds: number) => void;
   onProgramChange: () => void;
+  /** Editing a past workout: the exercise details (which rewrite the live
+   * program) aren't offered. */
+  programLocked?: boolean;
 }) {
   const [tab, setTab] = useState<"workout" | "warmup">("workout");
   // The sheet tracks an id, not a snapshot — after a mid-workout edit
@@ -45,27 +51,23 @@ export function ProgressionWorkout({
 
   return (
     <div>
-      <div className="mb-2 flex border-b border-line" role="tablist">
-        {(["workout", "warmup"] as const).map((t) => (
-          <button
-            key={t}
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className={`-mb-px flex-1 border-b-2 py-3 text-center text-sm font-medium capitalize transition-colors ${
-              tab === t ? "border-accent text-ink" : "border-transparent text-ink-faint"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+      <div className="mb-1 mt-2">
+        <SegmentedControl
+          label="Workout or warmup"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "workout", label: "Workout" },
+            { value: "warmup", label: "Warmup" },
+          ]}
+        />
       </div>
 
       {tab === "workout" ? (
         <WorkTab
           session={session}
           onSetDone={onSetDone}
-          onOpenDetail={(ex) => setDetailId(ex.programExercise.id)}
+          onOpenDetail={programLocked ? undefined : (ex) => setDetailId(ex.programExercise.id)}
         />
       ) : (
         <WarmupTab session={session} onSetDone={onSetDone} />
@@ -127,23 +129,29 @@ function WorkTab({
 }: {
   session: Session;
   onSetDone: (rest: number) => void;
-  onOpenDetail: (ex: SessionExercise) => void;
+  onOpenDetail?: (ex: SessionExercise) => void;
 }) {
   return (
     <div>
       {session.exercises.map((ex) => (
         <section key={`${session.workout.id}-${ex.programExercise.id}`} className="my-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold">{ex.exercise.name}</h2>
-            <button
-              onClick={() => onOpenDetail(ex)}
-              className="mono -my-1.5 flex items-center gap-1 px-2 py-2.5 text-[13px] text-accent"
-            >
-              {formatTarget(ex)}
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden>
-                <path d="M9 6l6 6-6 6" />
-              </svg>
-            </button>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="truncate text-[17px] font-semibold">{ex.exercise.name}</h2>
+            {/* The load is what you check between sets — it leads, in ink. */}
+            {onOpenDetail ? (
+              <button
+                onClick={() => onOpenDetail(ex)}
+                aria-label={`${ex.exercise.name} details: ${formatTarget(ex)}`}
+                className="row -my-1.5 -mr-2 flex flex-none items-center gap-1.5 rounded-lg px-2 py-2.5"
+              >
+                <TargetLabel ex={ex} />
+                <svg width="8" height="13" viewBox="0 0 8 14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-accent" aria-hidden>
+                  <path d="M1 1l6 6-6 6" />
+                </svg>
+              </button>
+            ) : (
+              <TargetLabel ex={ex} />
+            )}
           </div>
           {ex.exercise.note && (
             <p className="mb-2.5 -mt-1.5 text-[12.5px] italic text-plate-15">
@@ -179,7 +187,15 @@ function PlateRow({
   const [addedSets, setAddedSets] = useState(0);
   const totalSets = Math.max(prescribed + addedSets, knownBeyond);
   const targetReps = ex.programExercise.targetReps ?? 5;
+  const gymPlates = useGymPlates();
+  // Done sets wear the load's heaviest plate; bodyweight work wears the accent.
+  const tone =
+    ex.exercise.kind === "weighted" ? loadColor(ex.targets[0]?.weightKg, 20, gymPlates) : null;
   const bonusCount = totalSets - prescribed;
+  // Once a lift is under way, ring the next empty prescribed set.
+  const started = Array.from({ length: prescribed }, (_, i) => valueAt(i)).some((v) => v !== null);
+  const firstEmpty = Array.from({ length: prescribed }, (_, i) => i).find((i) => valueAt(i) === null);
+  const nextIndex = started ? firstEmpty : undefined;
   // Only an EMPTY trailing bonus set can be removed by "−"; a logged one must
   // be tapped back to empty first, so a mistaken remove can't drop real reps.
   const canRemove = bonusCount > 0 && valueAt(totalSets - 1) === null;
@@ -221,12 +237,15 @@ function PlateRow({
           // iOS-style corner ✕ on the trailing EMPTY bonus set. A logged one
           // must be tapped back to empty first — no silent data loss.
           const removable = isBonus && i === totalSets - 1 && valueAt(i) === null;
+          const isNext = i === nextIndex;
           return (
             <div key={i} className="relative">
               <SetPlate
                 target={targetReps}
                 value={valueAt(i)}
                 bonus={isBonus}
+                tone={tone}
+                upNext={isNext}
                 onChange={(n) => handle(i, n)}
               />
               {removable && (
@@ -246,7 +265,7 @@ function PlateRow({
         <button
           aria-label="Add a bonus set"
           onClick={() => setAddedSets((n) => n + 1)}
-          className="flex aspect-square w-full items-center justify-center rounded-full border-4 border-dashed border-[#2E3036] text-[22px] text-ink-faint"
+          className="flex aspect-square w-full items-center justify-center rounded-full text-[24px] font-light text-ink-faint outline-2 -outline-offset-2 outline-dashed outline-surface-3"
         >
           +
         </button>
@@ -285,8 +304,8 @@ function WarmupTab({
           <h2 className="mb-1 text-base font-semibold">{ex.exercise.name}</h2>
           <p className="text-[13px] leading-relaxed text-ink-faint">
             {(ex.targets[0]?.weightKg ?? 0) >= 20
-              ? "No warmup at this weight. Two light sets with the empty bar if you want them."
-              : "No warmup at this weight. A couple of easy ramp-in sets if you want them."}
+              ? "No warmup needed at this weight. Two light sets with the empty bar if you like."
+              : "No warmup needed at this weight. A couple of light sets if you like."}
           </p>
         </section>
       ))}
@@ -314,6 +333,7 @@ function WarmupSection({
   const { user } = useUser();
   const logged = useLoggedValues(workoutId, ex.exercise.id, true);
   const { valueAt, setAt } = useIntentOverlay(logged);
+  const gymPlates = useGymPlates();
 
   return (
     <section className="my-4">
@@ -328,6 +348,7 @@ function WarmupSection({
           <div key={i} className="flex items-center gap-3.5 py-2">
             <SetPlate
               size={44}
+              tone={loadColor(w.weightKg, 20, gymPlates)}
               target={w.reps}
               value={valueAt(i)}
               onChange={async (n) => {
@@ -353,6 +374,7 @@ function WarmupSection({
           </div>
         ))}
         <div className="flex items-center gap-3.5 py-3">
+          <span aria-hidden className="w-11 flex-none" />
           <span className="mono flex-1 text-sm text-accent">
             {ex.programExercise.targetReps} × {ex.targets[0]?.weightKg}kg
           </span>
@@ -431,8 +453,8 @@ function ExerciseSheet({
       <>
         <div className="mb-1 flex items-baseline justify-between">
           <h2 className="disp text-[19px]">{ex.exercise.name}</h2>
-          <button onClick={onClose} className="px-3 py-2 text-sm text-ink-dim">
-            Close
+          <button onClick={onClose} className="-mr-2 px-3 py-2 text-[17px] font-semibold text-accent">
+            Done
           </button>
         </div>
         {weight !== undefined && weight >= 20 ? (
@@ -490,10 +512,10 @@ function ExerciseSheet({
           )}
         </div>
         <p className="mt-2 px-1 text-[12px] leading-relaxed text-ink-faint">
-          Changes apply to this workout — warmup included — and carry forward.
+          Changes apply to this workout, including warmups, and to future workouts.
         </p>
 
-        <label className="eyebrow mb-1.5 mt-4 block px-1">Cue</label>
+        <label className="eyebrow mb-1.5 mt-4 block px-4">Cue</label>
         <textarea
           data-selectable
           value={note}
@@ -501,11 +523,11 @@ function ExerciseSheet({
           onBlur={saveNote}
           placeholder="A form reminder shown under this exercise during the workout"
           rows={2}
-          className="w-full resize-none rounded-2xl border border-line bg-white/5 p-3 text-[16px] leading-snug text-ink outline-none placeholder:text-ink-faint focus:border-accent"
+          className="w-full resize-none rounded-[12px] bg-fill p-3 text-[16px] leading-snug text-ink outline-none placeholder:text-ink-faint focus:ring-2 focus:ring-accent"
         />
         {weighted && (
           <>
-            <label className="eyebrow mb-1.5 mt-4 block px-1">Auto-progression</label>
+            <label className="eyebrow mb-1.5 mt-4 block px-4">Auto-progression</label>
             <div className="glass px-4 py-1.5">
               <Stepper
                 label="Add per workout"
@@ -555,6 +577,32 @@ function Stat({ k, v }: { k: string; v: string }) {
       <div className="eyebrow">{k}</div>
       <div className="disp mt-1 text-[17px]">{v}</div>
     </div>
+  );
+}
+
+/** "● 27.5kg  5×5" — a pip in the load's plate color ties the done-set
+ * color to the weight it stands for. */
+function TargetLabel({ ex }: { ex: SessionExercise }) {
+  const gymPlates = useGymPlates();
+  const pe = ex.programExercise;
+  const w = ex.targets[0]?.weightKg;
+  const tone = ex.exercise.kind === "weighted" ? loadColor(w, 20, gymPlates) : null;
+  return (
+    <span className="flex items-baseline gap-1.5">
+      {tone && (
+        <span
+          aria-hidden
+          className="h-2.5 w-2.5 self-center rounded-full ring-1 ring-black/20"
+          style={{ background: tone.fill }}
+        />
+      )}
+      {w !== undefined && w !== 0 && (
+        <span className="mono text-[17px] font-semibold text-ink">{w}kg</span>
+      )}
+      <span className="mono text-[15px] text-ink-dim">
+        {pe.sets}×{pe.targetReps ?? ""}
+      </span>
+    </span>
   );
 }
 

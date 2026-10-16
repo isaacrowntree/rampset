@@ -32,21 +32,20 @@ export function ConfirmSheet({
       role="alertdialog"
       keepHistoryOnUnmount={keepHistoryOnUnmount}
     >
-      <h2 className="disp text-[18px]">{title}</h2>
-      <p className="mt-1.5 text-[14px] leading-relaxed text-ink-dim">{body}</p>
-      <div className="mt-5 flex flex-col gap-2.5">
+      <h2 className="text-center text-[20px] font-semibold">{title}</h2>
+      <p className="mx-auto mt-1.5 max-w-[30ch] text-center text-[15px] leading-snug text-ink-dim">
+        {body}
+      </p>
+      <div className="mt-6 flex flex-col gap-1">
         <button
           onClick={onConfirm}
-          className={`w-full rounded-full py-3.5 text-[15px] font-semibold ${
-            tone === "positive" ? "bg-plate-10 text-black" : "bg-plate-25 text-white"
+          className={`w-full rounded-full py-3.5 text-[17px] font-semibold ${
+            tone === "positive" ? "bg-plate-10 text-black" : "bg-plate-25 text-black"
           }`}
         >
           {confirmLabel}
         </button>
-        <button
-          onClick={onCancel}
-          className="glass w-full rounded-full py-3.5 text-[15px] font-medium text-ink"
-        >
+        <button onClick={onCancel} className="w-full py-3.5 text-[17px] text-accent">
           Cancel
         </button>
       </div>

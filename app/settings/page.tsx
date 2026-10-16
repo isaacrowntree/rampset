@@ -1,5 +1,7 @@
 "use client";
 
+import { Switch } from "@/components/Switch";
+import { useGymHas25s, setGymHas25s } from "@/lib/gymPlates";
 import { useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
@@ -109,7 +111,7 @@ export default function SettingsPage() {
     <div className="pb-8">
       <AppHeader title="Settings" />
 
-      <p className="eyebrow mb-2 px-1">Account</p>
+      <h2 className="eyebrow mb-2 px-4">Account</h2>
       <div className="mb-5 glass">
         {users.map((u) => (
           <button
@@ -130,13 +132,15 @@ export default function SettingsPage() {
               <span className="block truncate text-[12.5px] text-ink-faint">{u.email}</span>
             </span>
             {u.id === user.id && (
-              <span className="mono flex-none text-[11px] text-accent">active</span>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="flex-none text-accent" role="img" aria-label="active">
+                <path d="M5 12.5l4.5 4.5L19 7.5" />
+              </svg>
             )}
           </button>
         ))}
       </div>
 
-      <p className="eyebrow mb-2 px-1">Workout</p>
+      <h2 className="eyebrow mb-2 px-4">Workout</h2>
       <div className="mb-5 glass">
         <RestTimerSetting userId={user.id} />
         <div className="px-4 pb-3 text-[12.5px] leading-relaxed text-ink-faint">
@@ -146,7 +150,16 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <p className="eyebrow mb-2 px-1">Program</p>
+      <h2 className="eyebrow mb-2 px-4">Gym</h2>
+      <div className="mb-1 glass">
+        <GymPlatesSetting />
+      </div>
+      <p className="mb-5 px-4 text-[12.5px] leading-relaxed text-ink-faint">
+        Plate loading uses the plates your gym has. Turn this off if your
+        heaviest plate is 20kg.
+      </p>
+
+      <h2 className="eyebrow mb-2 px-4">Program</h2>
       <div className="mb-5 glass">
         {PROGRAM_TEMPLATES.map((t) => {
           const active = program?.templateId === t.id;
@@ -164,7 +177,9 @@ export default function SettingsPage() {
                 </span>
               </span>
               {active ? (
-                <span className="mono flex-none text-[11px] text-accent">active</span>
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="flex-none text-accent" role="img" aria-label="active">
+                <path d="M5 12.5l4.5 4.5L19 7.5" />
+              </svg>
               ) : (
                 <span className="mono flex-none text-ink-faint">›</span>
               )}
@@ -177,7 +192,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <p className="eyebrow mb-2 px-1">Data</p>
+      <h2 className="eyebrow mb-2 px-4">Data</h2>
       <div className="glass">
         <div className="flex items-center justify-between border-b border-line px-4 py-3.5">
           <div>
@@ -276,12 +291,12 @@ export default function SettingsPage() {
       </div>
 
       {notice && (
-        <div className="mt-3 glass border-plate-10/40 p-4 text-[13.5px] leading-relaxed">
+        <div className="mt-3 glass p-4 ring-1 ring-plate-10/40 text-[13.5px] leading-relaxed">
           {notice}
         </div>
       )}
       {error && (
-        <div className="mt-3 glass border-plate-25/40 p-4 text-[13.5px] leading-relaxed">
+        <div className="mt-3 glass p-4 ring-1 ring-plate-25/40 text-[13.5px] leading-relaxed">
           {error}
         </div>
       )}
@@ -346,13 +361,24 @@ export default function SettingsPage() {
         />
       )}
 
-      <p className="eyebrow mb-2 mt-5 px-1">About</p>
+      <h2 className="eyebrow mb-2 mt-5 px-4">About</h2>
       <div className="glass px-4 py-3.5 text-[12.5px] leading-relaxed text-ink-faint">
         Rampset runs entirely on this device — every workout is stored locally and
         works offline. Deployment target: Cloudflare Workers behind Cloudflare
         Access ({users.map((u) => u.email).join(", ")}).
       </div>
     </div>
+  );
+}
+
+function GymPlatesSetting() {
+  const has25s = useGymHas25s();
+  return (
+    // The whole row toggles, not just the 51×31 switch.
+    <label className="flex min-h-[48px] cursor-pointer items-center justify-between gap-3 px-4 py-2">
+      <span className="text-[17px]">25kg plates</span>
+      <Switch checked={has25s} onChange={setGymHas25s} label="Gym has 25kg plates" />
+    </label>
   );
 }
 
@@ -367,7 +393,7 @@ function RestTimerSetting({ userId }: { userId: string }) {
     <label className="flex items-center justify-between px-4 pb-1 pt-3.5">
       <span>
         <span className="block text-[15px] font-medium">Rest timer</span>
-        <span className="block text-[12.5px] text-ink-faint">seconds between sets</span>
+        <span className="block text-[13px] text-ink-faint">Seconds between sets</span>
       </span>
       <input
         className="setfield max-w-[90px]" autoComplete="off" autoCorrect="off" spellCheck={false} onFocus={(e) => e.currentTarget.select()}
