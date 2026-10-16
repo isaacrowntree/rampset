@@ -11,6 +11,8 @@ import {
   startWorkout,
   logSet,
   finishWorkout,
+  saveFinishedWorkout,
+  buildEditSession,
   setWorkoutNote,
 } from "./session";
 
@@ -166,6 +168,170 @@ describe("finishWorkout (program mode progression)", () => {
   });
 });
 
+/** StrongLifts: weight goes up only when every prescribed set is done at
+ * full reps. A skipped set fails the session exactly like a short one. */
+describe("finishWorkout (skipped and failed sets)", () => {
+  const DAY_B = "day-5x5-b-user-1";
+
+  async function squatSession() {
+    const s = await startWorkout(USER1, DAY_B);
+    const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+    const log = (i: number, reps = 5) =>
+      logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: 27.5, reps });
+    const pe = async () => (await db.programExercises.get(squat.programExercise.id))!;
+    return { s, squat, log, pe };
+  }
+
+  it("holds the weight when a set is skipped", async () => {
+    const { s, log, pe } = await squatSession();
+    for (const i of [0, 1, 2, 4]) await log(i); // set 4 never logged
+    await finishWorkout(s.workout.id);
+    expect((await pe()).workingWeightKg).toBe(27.5);
+  });
+
+  it("holds the weight when a set falls short", async () => {
+    const { s, log, pe } = await squatSession();
+    for (let i = 0; i < 5; i++) await log(i, i === 2 ? 4 : 5);
+    await finishWorkout(s.workout.id);
+    expect((await pe()).workingWeightKg).toBe(27.5);
+  });
+
+  it("doesn't let a bonus set stand in for a skipped one", async () => {
+    const { s, log, pe } = await squatSession();
+    for (const i of [0, 1, 2, 3, 5]) await log(i); // set 4 skipped, bonus 5 done
+    await finishWorkout(s.workout.id);
+    expect((await pe()).workingWeightKg).toBe(27.5);
+  });
+
+  it("holds the weight when Sets is lowered mid-workout to skip some", async () => {
+    const { s, log, pe } = await squatSession();
+    // The exercise sheet's stepper rewrites the program, mid-workout.
+    await db.programExercises.update((await pe()).id, { sets: 3 });
+    for (let i = 0; i < 3; i++) await log(i);
+    await finishWorkout(s.workout.id);
+
+    const after = await pe();
+    expect(after.workingWeightKg).toBe(27.5);
+    expect(after.sets).toBe(3); // the change still carries forward
+  });
+
+  it("progresses on the lowered count from the next workout on", async () => {
+    const first = await squatSession();
+    await db.programExercises.update((await first.pe()).id, { sets: 3 });
+    for (let i = 0; i < 3; i++) await first.log(i);
+    await finishWorkout(first.s.workout.id);
+    await db.workouts.update(first.s.workout.id, { startTs: 1 });
+
+    const next = await squatSession();
+    expect(next.s.workout.prescribedSets?.[next.squat.exercise.id]).toBe(3);
+    for (let i = 0; i < 3; i++) await next.log(i);
+    await finishWorkout(next.s.workout.id);
+    expect((await next.pe()).workingWeightKg).toBe(30);
+  });
+
+  it("judges each past session against its own prescription", async () => {
+    // Deload after 2 fails, so the streak decides the outcome.
+    const first = await squatSession();
+    await db.programExercises.update((await first.pe()).id, { deloadAfterFails: 2 });
+    for (let i = 0; i < 3; i++) await first.log(i); // 3 of 5: a fail
+    await finishWorkout(first.s.workout.id);
+    await db.workouts.update(first.s.workout.id, { startTs: 1 });
+
+    // Between workouts the lifter drops to 3×5, then misses again.
+    await db.programExercises.update((await first.pe()).id, { sets: 3 });
+    const second = await squatSession();
+    for (let i = 0; i < 3; i++) await second.log(i, i === 2 ? 3 : 5);
+    await finishWorkout(second.s.workout.id);
+
+    // Re-judged against today's 3 sets, the first session would read as a
+    // success and break the streak. It was a fail: two in a row → deload.
+    expect((await second.pe()).workingWeightKg).toBe(22.5);
+  });
+
+  it("falls back to the program's count for workouts recorded before", async () => {
+    const { s, log, pe } = await squatSession();
+    await db.workouts.update(s.workout.id, { prescribedSets: undefined });
+    for (let i = 0; i < 5; i++) await log(i);
+    await finishWorkout(s.workout.id);
+    expect((await pe()).workingWeightKg).toBe(30);
+  });
+});
+
+/** A finished workout reopened from History and saved again. */
+describe("saveFinishedWorkout", () => {
+  const squatPe = async (dayId: string, exerciseId: string) =>
+    (await db.programExercises.where({ programDayId: dayId }).toArray()).find(
+      (pe) => pe.exerciseId === exerciseId,
+    )!;
+
+  it("re-settles progression for a workout finished too early", async () => {
+    const dayB = await db.programDays.get("day-5x5-b-user-1");
+    const s = await startWorkout(USER1, dayB!.id);
+    const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+    for (let i = 0; i < 3; i++) {
+      await logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: 27.5, reps: 5 });
+    }
+    await finishWorkout(s.workout.id); // 3 of 5 sets: a fail, weight held
+    expect((await squatPe(dayB!.id, squat.exercise.id)).workingWeightKg).toBe(27.5);
+    const { endTs } = (await db.workouts.get(s.workout.id))!;
+
+    for (let i = 3; i < 5; i++) {
+      await logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: 27.5, reps: 5 });
+    }
+    await saveFinishedWorkout(s.workout.id);
+
+    expect((await squatPe(dayB!.id, squat.exercise.id)).workingWeightKg).toBe(30);
+    expect((await db.workouts.get(s.workout.id))!.endTs).toBe(endTs);
+  });
+
+  it("is idempotent — saving twice advances once", async () => {
+    const dayB = await db.programDays.get("day-5x5-b-user-1");
+    const s = await startWorkout(USER1, dayB!.id);
+    const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+    for (let i = 0; i < 5; i++) {
+      await logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: 27.5, reps: 5 });
+    }
+    await finishWorkout(s.workout.id);
+    await saveFinishedWorkout(s.workout.id);
+    await saveFinishedWorkout(s.workout.id);
+    expect((await squatPe(dayB!.id, squat.exercise.id)).workingWeightKg).toBe(30);
+  });
+
+  it("leaves progression alone when a later workout exists", async () => {
+    const dayB = await db.programDays.get("day-5x5-b-user-1");
+    const old = await startWorkout(USER1, dayB!.id);
+    const squat = old.exercises.find((e) => e.exercise.name === "Squat")!;
+    await logSet(old.workout.id, USER1, squat.exercise.id, 0, { weightKg: 27.5, reps: 5 });
+    await finishWorkout(old.workout.id);
+    await db.workouts.update(old.workout.id, { startTs: 1, date: "2026-01-01" });
+
+    const next = await startWorkout(USER1, dayB!.id);
+    await logSet(next.workout.id, USER1, squat.exercise.id, 0, { weightKg: 27.5, reps: 5 });
+    await finishWorkout(next.workout.id);
+    // A manual weight edit after the latest workout must survive.
+    const pe = await squatPe(dayB!.id, squat.exercise.id);
+    await db.programExercises.update(pe.id, { workingWeightKg: 50 });
+
+    for (let i = 1; i < 5; i++) {
+      await logSet(old.workout.id, USER1, squat.exercise.id, i, { weightKg: 27.5, reps: 5 });
+    }
+    await saveFinishedWorkout(old.workout.id);
+    expect((await db.programExercises.get(pe.id))!.workingWeightKg).toBe(50);
+  });
+
+  it("never re-bumps a Madcow top", async () => {
+    await db.exercises.add({ id: "mc-squat", userId: USER1, name: "MC Squat", kind: "weighted", restSeconds: 300 });
+    await db.programs.add({ id: "mc-prog", userId: USER1, name: "Madcow", mode: "madcow", templateId: "madcow" });
+    await db.programDays.add({ id: "mc-fri", programId: "mc-prog", position: 0, name: "Friday" });
+    await db.programExercises.add({ id: "mc-pe-fri", programDayId: "mc-fri", exerciseId: "mc-squat", position: 0, sets: 6, targetReps: 5, incrementKg: 2.5, workingWeightKg: 100, madcowRole: "intensity", madcowProgresses: true });
+    const s = await startWorkout(USER1, "mc-fri");
+    await logSet(s.workout.id, USER1, "mc-squat", 4, { weightKg: 102.5, reps: 3 });
+    await finishWorkout(s.workout.id);
+    await saveFinishedWorkout(s.workout.id);
+    expect((await db.programExercises.get("mc-pe-fri"))?.workingWeightKg).toBe(102.5);
+  });
+});
+
 describe("setWorkoutNote", () => {
   it("saves a trimmed note onto the workout", async () => {
     const day = await nextProgramDay(USER1);
@@ -259,5 +425,38 @@ describe("startWorkout (no phantom rows)", () => {
 
     const today = await startWorkout(USER1, "day-5x5-a-user-1");
     expect(today.workout.id).not.toBe(stale.workout.id);
+  });
+});
+
+/** Re-opening a finished workout must show what was lifted THAT day. */
+describe("buildEditSession", () => {
+  it("uses the workout's own weights and set count, not today's program", async () => {
+    const dayB = (await db.programDays.get("day-5x5-b-user-1"))!;
+    const s = await startWorkout(USER1, dayB.id);
+    const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+    for (let i = 0; i < 5; i++) {
+      await logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: 27.5, reps: 5 });
+    }
+    await finishWorkout(s.workout.id); // program advances squat to 30
+    // …and later drops it to 3 sets.
+    await db.programExercises.update(squat.programExercise.id, { sets: 3 });
+
+    const edit = await buildEditSession((await db.workouts.get(s.workout.id))!);
+    const sq = edit.exercises.find((e) => e.exercise.id === squat.exercise.id)!;
+    expect(sq.targets).toHaveLength(5);
+    expect(sq.targets.every((t) => t.weightKg === 27.5)).toBe(true);
+  });
+
+  it("fills never-logged sets at the session's weight", async () => {
+    const dayB = (await db.programDays.get("day-5x5-b-user-1"))!;
+    const s = await startWorkout(USER1, dayB.id);
+    const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+    await logSet(s.workout.id, USER1, squat.exercise.id, 0, { weightKg: 27.5, reps: 5 });
+    await finishWorkout(s.workout.id);
+    await db.programExercises.update(squat.programExercise.id, { workingWeightKg: 50 });
+
+    const edit = await buildEditSession((await db.workouts.get(s.workout.id))!);
+    const sq = edit.exercises.find((e) => e.exercise.id === squat.exercise.id)!;
+    expect(sq.targets[4].weightKg).toBe(27.5);
   });
 });

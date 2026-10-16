@@ -87,6 +87,11 @@ export interface Workout {
   startTs?: number;
   endTs?: number;
   notes?: string;
+  /** exerciseId → work sets the program prescribed when this workout
+   * started. Progression judges the session against this, so lowering Sets
+   * mid-workout (which rewrites the program) can't turn skipped sets into a
+   * success. Absent on workouts from before it was recorded. */
+  prescribedSets?: Record<string, number>;
 }
 
 export interface SetEntry {

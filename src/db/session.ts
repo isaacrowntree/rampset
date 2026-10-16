@@ -6,6 +6,7 @@
 import { db, newId } from "./db";
 import type {
   Exercise,
+  Program,
   ProgramDay,
   ProgramExercise,
   SetEntry,
@@ -151,6 +152,46 @@ export async function buildSessionPlan(
   return { day, mode: program.mode, exercises };
 }
 
+/** The plan for re-opening a FINISHED workout: the day's exercises, but with
+ * the weights and set counts that workout actually had — not today's
+ * program. Rebuilding from the live program re-stamped a corrected set at the
+ * weight the program had since advanced to, which then advanced it again. */
+export async function buildEditSession(workout: Workout): Promise<Session> {
+  if (!workout.programDayId) throw new Error("Workout has no program day");
+  const plan = await buildSessionPlan(workout.userId, workout.programDayId);
+  const logged = (await db.sets.where({ workoutId: workout.id }).toArray()).filter(
+    (s) => !s.isWarmup,
+  );
+
+  const exercises = plan.exercises.map((ex) => {
+    const sets = logged
+      .filter((s) => s.exerciseId === ex.exercise.id)
+      .sort((a, b) => a.setIndex - b.setIndex);
+    const count =
+      workout.prescribedSets?.[ex.exercise.id] ?? ex.programExercise.sets;
+    // The weight that session was lifted at; unlogged sets inherit it.
+    const sessionKg = sets.find((s) => s.weightKg !== undefined)?.weightKg;
+    const targets = Array.from({ length: count }, (_, i) => {
+      const done = sets.find((s) => s.setIndex === i);
+      const planned = ex.targets[Math.min(i, ex.targets.length - 1)];
+      const ramped = plan.mode === "madcow"; // Madcow ramps differ per set
+      return {
+        weightKg: done?.weightKg ?? (ramped ? planned?.weightKg : (sessionKg ?? planned?.weightKg)),
+        reps: planned?.reps,
+        seconds: planned?.seconds,
+      };
+    });
+    const workKg = targets[0]?.weightKg;
+    const warmups =
+      plan.mode === "progression" && ex.exercise.kind === "weighted" && workKg !== undefined && workKg > 0
+        ? warmupRamp(workKg, 20, warmupStyle(ex.exercise.name))
+        : ex.warmups;
+    return { ...ex, targets, warmups };
+  });
+
+  return { workout, ...plan, exercises };
+}
+
 /** Create the workout row and return the full session. */
 export async function startWorkout(userId: string, dayId: string): Promise<Session> {
   const plan = await buildSessionPlan(userId, dayId);
@@ -186,6 +227,9 @@ export async function startWorkout(userId: string, dayId: string): Promise<Sessi
     date: new Date().toISOString().slice(0, 10),
     startTs: Date.now(),
     bodyWeightKg: carriedBw,
+    prescribedSets: Object.fromEntries(
+      plan.exercises.map((e) => [e.exercise.id, e.programExercise.sets]),
+    ),
   };
   await db.workouts.add(workout);
   return { workout, ...plan };
@@ -259,13 +303,20 @@ export async function clearSet(
   await db.sets.delete(setId(workoutId, exerciseId, setIndex));
 }
 
-/** Was this session a success for the exercise? Judged over the PRESCRIBED
- * set indexes only — extra back-off sets (index >= pe.sets) don't count
- * against progression. */
-function sessionSuccess(sets: SetEntry[], pe: ProgramExercise): boolean {
-  const prescribed = sets.filter((s) => !s.isWarmup && s.setIndex < pe.sets);
+/** How many work sets a session had to complete: what was prescribed when
+ * it started. Workouts from before that was recorded fall back to the
+ * program's current count. */
+function requiredSets(workout: Workout | undefined, pe: ProgramExercise): number {
+  return workout?.prescribedSets?.[pe.exerciseId] ?? pe.sets;
+}
+
+/** Was this session a success for the exercise? Every prescribed set must be
+ * logged at full reps — a skipped set fails the session just like a short
+ * one. Extra back-off sets (index >= the prescription) count neither way. */
+function sessionSuccess(sets: SetEntry[], pe: ProgramExercise, required: number): boolean {
+  const prescribed = sets.filter((s) => !s.isWarmup && s.setIndex < required);
   return (
-    prescribed.length >= pe.sets &&
+    prescribed.length >= required &&
     prescribed.every((s) => (s.reps ?? 0) >= (pe.targetReps ?? 0))
   );
 }
@@ -277,11 +328,11 @@ function sessionSuccess(sets: SetEntry[], pe: ProgramExercise): boolean {
  * set logged then the weight changed mid-workout — must not be read as "0kg,"
  * which for an assisted lift is the HARDEST possible set and would silently
  * reset the working weight toward zero (e.g. −10kg → +2.5kg instead of −7.5). */
-function sessionWeight(sets: SetEntry[], pe: ProgramExercise): number {
+function sessionWeight(sets: SetEntry[], pe: ProgramExercise, required: number): number {
   const weighted = sets
     .filter((s) => !s.isWarmup && s.weightKg !== undefined)
     .sort((a, b) => a.setIndex - b.setIndex);
-  const prescribed = weighted.filter((s) => s.setIndex < pe.sets);
+  const prescribed = weighted.filter((s) => s.setIndex < required);
   const pick = (prescribed.length ? prescribed : weighted).at(-1);
   return pick?.weightKg ?? pe.workingWeightKg ?? 0;
 }
@@ -313,7 +364,48 @@ export async function finishWorkout(workoutId: string): Promise<void> {
     return;
   }
   if (program.mode !== "progression") return;
+  await advanceLinearProgression(program, workout, sets);
+}
 
+/** Save edits to a workout that's already finished — reopened from History
+ * in the workout screen. Its date and endTs stay put: it's the same session,
+ * corrected, not a new one.
+ *
+ * Linear progression is recomputed, but only when this is the program's
+ * latest finished workout. That ladder is a pure function of history, so
+ * re-running it is idempotent and picks up a workout finished too early;
+ * for an older workout it would instead clobber any weight edited since.
+ * Madcow's bump is relative to the current top, so re-running it would
+ * advance twice — it's left alone. */
+export async function saveFinishedWorkout(workoutId: string): Promise<void> {
+  const workout = await db.workouts.get(workoutId);
+  if (!workout || workout.endTs === undefined || !workout.programDayId) return;
+
+  const day = await db.programDays.get(workout.programDayId);
+  const program = day ? await db.programs.get(day.programId) : undefined;
+  if (!program || program.mode !== "progression") return;
+
+  const dayIds = new Set(
+    (await db.programDays.where({ programId: program.id }).toArray()).map((d) => d.id),
+  );
+  const latest = (await db.workouts.where({ userId: workout.userId }).toArray())
+    .filter((w) => w.endTs !== undefined && w.programDayId && dayIds.has(w.programDayId))
+    .sort((a, b) => (a.startTs ?? 0) - (b.startTs ?? 0))
+    .at(-1);
+  if (latest?.id !== workoutId) return;
+
+  const sets = await db.sets.where({ workoutId }).toArray();
+  await advanceLinearProgression(program, workout, sets);
+}
+
+/** Program-mode progression for one finished workout: advance (or hold, or
+ * deload) each exercise it touched from its session history. */
+async function advanceLinearProgression(
+  program: Program,
+  workout: Workout,
+  sets: SetEntry[],
+): Promise<void> {
+  if (!workout.programDayId) return;
   const pes = await db.programExercises
     .where({ programDayId: workout.programDayId })
     .toArray();
@@ -430,7 +522,7 @@ async function sessionHistory(
     .where("programDayId")
     .anyOf(programDayIds)
     .toArray();
-  const workoutTs = new Map(dayWorkouts.map((w) => [w.id, w.startTs ?? 0]));
+  const byId = new Map(dayWorkouts.map((w) => [w.id, w]));
 
   const all = await db.sets
     .where("exerciseId")
@@ -440,7 +532,7 @@ async function sessionHistory(
 
   const byWorkout = new Map<string, SetEntry[]>();
   for (const s of all) {
-    if (s.isWarmup || !workoutTs.has(s.workoutId)) continue;
+    if (s.isWarmup || !byId.has(s.workoutId)) continue;
     const list = byWorkout.get(s.workoutId) ?? [];
     list.push(s);
     byWorkout.set(s.workoutId, list);
@@ -448,10 +540,15 @@ async function sessionHistory(
 
   const sessions: { weightKg: number; success: boolean; ts: number }[] = [];
   for (const [workoutId, workoutSets] of byWorkout.entries()) {
+    // Each session is judged against its own prescription, not today's: after
+    // a stall drops 5×5 → 3×5, an old session that missed its 4th set was
+    // still a fail.
+    const workout = byId.get(workoutId);
+    const required = requiredSets(workout, pe);
     sessions.push({
-      weightKg: sessionWeight(workoutSets, pe),
-      success: sessionSuccess(workoutSets, pe),
-      ts: workoutTs.get(workoutId) ?? 0,
+      weightKg: sessionWeight(workoutSets, pe, required),
+      success: sessionSuccess(workoutSets, pe, required),
+      ts: workout?.startTs ?? 0,
     });
   }
   sessions.sort((a, b) => a.ts - b.ts);
