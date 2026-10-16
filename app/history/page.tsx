@@ -1,9 +1,8 @@
 "use client";
 
-import { Chevron } from "@/components/Chevron";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type TouchEvent as ReactTouchEvent } from "react";
+import { useEffect, useRef, useState, type RefObject, type TouchEvent as ReactTouchEvent } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
 import { useUser } from "@/state/UserContext";
@@ -13,8 +12,6 @@ import { getActiveWorkout } from "@/db/activeWorkout";
 import { takeJustFinished, type JustFinished } from "@/lib/justFinished";
 import { Sheet } from "@/components/Sheet";
 import { Celebration } from "@/components/Celebration";
-import { scheduleBackup } from "@/lib/backupAfterEdit";
-import { roundStep } from "@/lib/weightDisplay";
 import { prWorkoutIds } from "@/lib/records";
 import { orderExercises } from "@/lib/exerciseOrder";
 import type { SetEntry } from "@/lib/types";
@@ -32,8 +29,7 @@ async function exercisePositions(programDayId?: string): Promise<Map<string, num
 export default function HistoryPage() {
   const { user } = useUser();
 
-  // Which past workout is open for editing its logged sets.
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const router = useRouter();
   // A read-only summary sheet, for a day tapped in the calendar that isn't
   // in the loaded Recent list.
   const [summaryId, setSummaryId] = useState<string | null>(null);
@@ -123,6 +119,17 @@ export default function HistoryPage() {
     return () => io.disconnect();
   }, [data?.recent.length]);
 
+  // Leaving the recap sheet for the workout screen: router.replace takes over
+  // the sheet's history entry, so the sheet mustn't pop it on the way out.
+  const navigatingAway = useRef(false);
+
+  /** A past workout opens in the workout screen to edit; one with no program
+   * day to rebuild that screen from (an old import) gets the read-only recap. */
+  const open = (w: { id: string; programDayId?: string }) => {
+    if (w.programDayId) router.push(`/workout?edit=${w.id}`);
+    else setSummaryId(w.id);
+  };
+
   const scrollToWorkout = (id: string) => {
     const el = document.getElementById(`wk-${id}`);
     if (!el) return;
@@ -192,8 +199,8 @@ export default function HistoryPage() {
             <button
               key={w.id}
               id={`wk-${w.id}`}
-              onClick={() => setEditingId(w.id)}
-              aria-label={`Edit ${w.dayLabel} from ${formatDate(w.date)}`}
+              onClick={() => open(w)}
+              aria-label={`${w.programDayId ? "Edit" : "View"} ${w.dayLabel} from ${formatDate(w.date)}`}
               className={`glass row block w-full p-4 text-left ${
                 flashId === w.id ? "ring-2 ring-accent" : ""
               }`}
@@ -251,36 +258,27 @@ export default function HistoryPage() {
             title={w.dayLabel}
             date={formatDate(w.date)}
             exName={data.exName}
-            onEdit={() => {
-              setSummaryId(null);
-              setEditingId(w.id);
-            }}
+            onEdit={
+              w.programDayId
+                ? () => {
+                    navigatingAway.current = true;
+                    router.replace(`/workout?edit=${w.id}`);
+                  }
+                : undefined
+            }
+            keepHistoryOnUnmount={navigatingAway}
             onClose={() => setSummaryId(null)}
           />
         );
       })()}
 
-      {editingId && (() => {
-        const w = data.finished.find((r) => r.id === editingId);
-        if (!w) return null;
-        return (
-          <EditWorkoutSheet
-            workoutId={w.id}
-            canReopen={w.programDayId !== undefined}
-            title={w.dayLabel}
-            date={formatDate(w.date)}
-            exName={data.exName}
-            onSaved={() => scheduleBackup(user.id, user.email)}
-            onClose={() => setEditingId(null)}
-          />
-        );
-      })()}
     </div>
   );
 }
 
 /** Read-only recap of a workout — the "recent card" as a sheet, for a
- * calendar day that isn't in the loaded Recent list. Edit is a step in. */
+ * calendar day that isn't in the loaded Recent list, or a workout that can't
+ * open in the workout screen. Editing is a step in. */
 function WorkoutSummarySheet({
   workoutId,
   title,
@@ -288,13 +286,16 @@ function WorkoutSummarySheet({
   exName,
   onEdit,
   onClose,
+  keepHistoryOnUnmount,
 }: {
   workoutId: string;
   title: string;
   date: string;
   exName: Map<string, string>;
-  onEdit: () => void;
+  /** Absent when the workout can't open in the workout screen. */
+  onEdit?: () => void;
   onClose: () => void;
+  keepHistoryOnUnmount?: RefObject<boolean>;
 }) {
   const loaded = useLiveQuery(async () => {
     const sets = await db.sets.where({ workoutId }).toArray();
@@ -305,7 +306,7 @@ function WorkoutSummarySheet({
   const byExercise = orderExercises(groupByExercise(sets), loaded?.positions ?? new Map());
 
   return (
-    <Sheet label={`${title} recap`} onClose={onClose}>
+    <Sheet label={`${title} recap`} onClose={onClose} keepHistoryOnUnmount={keepHistoryOnUnmount}>
       <div className="mb-3 flex items-baseline justify-between">
         <h2 className="disp text-[19px]">{title}</h2>
         <span className="mono text-xs text-ink-faint">{date}</span>
@@ -319,285 +320,16 @@ function WorkoutSummarySheet({
         ))}
         {sets.length === 0 && <p className="text-sm text-ink-faint">Loading…</p>}
       </div>
-      <button
-        onClick={onEdit}
-        className="mt-4 w-full rounded-full bg-accent py-3.5 text-[15px] font-semibold text-on-accent"
-      >
-        Edit workout
-      </button>
-    </Sheet>
-  );
-}
-
-/** Edit a finished workout's logged sets — correct a weight or rep count
- * after the fact (e.g. Dips logged at 2.5kg was actually −10kg assisted). */
-function EditWorkoutSheet({
-  workoutId,
-  canReopen,
-  title,
-  date,
-  exName,
-  onSaved,
-  onClose,
-}: {
-  workoutId: string;
-  /** Has a program day to rebuild the full workout screen from. */
-  canReopen: boolean;
-  title: string;
-  date: string;
-  exName: Map<string, string>;
-  onSaved: () => void;
-  onClose: () => void;
-}) {
-  const router = useRouter();
-  // Set before leaving for the workout view, so the sheet doesn't pop the
-  // history entry router.replace just took over (that bounced straight back).
-  const navigatingAway = useRef(false);
-
-  // Self-loading by id so any workout opens — including old ones a calendar
-  // tap reaches that aren't in the recent list.
-  const loaded = useLiveQuery(async () => {
-    const rows = await db.sets.where({ workoutId }).toArray();
-    const w = await db.workouts.get(workoutId);
-    return { sets: rows, positions: await exercisePositions(w?.programDayId) };
-  }, [workoutId]);
-  const sets = useMemo(() => loaded?.sets ?? [], [loaded]);
-  const groups = orderExercises(groupForEdit(sets), loaded?.positions ?? new Map());
-
-  type Row = { weight: string; reps: string; seconds: string };
-  const [draft, setDraft] = useState<Record<string, Row>>({});
-  // Assist is per exercise: a negative weight means the machine took load off.
-  const [assisted, setAssisted] = useState<Record<string, boolean>>({});
-  const [saving, setSaving] = useState(false);
-
-  // Seed the draft once the sets arrive (liveQuery is async); the guard keeps
-  // later live updates from clobbering in-progress edits.
-  const seeded = useRef(false);
-  useEffect(() => {
-    if (seeded.current || sets.length === 0) return;
-    seeded.current = true;
-    const d: Record<string, Row> = {};
-    const a: Record<string, boolean> = {};
-    for (const s of sets) {
-      d[s.id] = {
-        weight: s.weightKg != null ? String(Math.abs(s.weightKg)) : "",
-        reps: s.reps != null ? String(s.reps) : "",
-        seconds: s.seconds != null ? String(s.seconds) : "",
-      };
-      if ((s.weightKg ?? 0) < 0) a[s.exerciseId] = true;
-    }
-    setDraft(d);
-    setAssisted(a);
-  }, [sets]);
-
-  const setField = (id: string, key: keyof Row, val: string) =>
-    setDraft((prev) => ({ ...prev, [id]: { ...prev[id], [key]: val } }));
-
-  // Nudge a stored magnitude by ±2.5kg (the assist toggle owns the sign),
-  // never below zero.
-  const stepWeight = (id: string, dir: -1 | 1) => {
-    if (typeof navigator !== "undefined") navigator.vibrate?.(8);
-    setDraft((prev) => {
-      const cur = Number(prev[id]?.weight ?? "0") || 0;
-      const next = Math.max(0, roundStep(cur + dir * 2.5));
-      return { ...prev, [id]: { ...prev[id], weight: String(next) } };
-    });
-  };
-
-  const save = async () => {
-    if (saving) return;
-    setSaving(true);
-    for (const s of sets) {
-      const row = draft[s.id];
-      if (!row) continue;
-      const changes: Partial<SetEntry> = {};
-      if (s.seconds != null) {
-        if (row.seconds !== "" && Number.isFinite(Number(row.seconds))) {
-          changes.seconds = Number(row.seconds);
-        }
-      } else {
-        if (row.weight !== "" && Number.isFinite(Number(row.weight))) {
-          const mag = Math.abs(Number(row.weight));
-          changes.weightKg = assisted[s.exerciseId] ? -mag : mag;
-        }
-        if (row.reps !== "" && Number.isFinite(Number(row.reps))) {
-          changes.reps = Number(row.reps);
-        }
-      }
-      if (Object.keys(changes).length > 0) await db.sets.update(s.id, changes);
-    }
-    onSaved();
-    onClose();
-  };
-
-  return (
-    <Sheet label={`Edit ${title}`} onClose={onClose} keepHistoryOnUnmount={navigatingAway}>
-      <div className="mb-3 flex items-baseline justify-between">
-        <h2 className="disp text-[19px]">{title}</h2>
-        <span className="mono text-xs text-ink-faint">{date}</span>
-      </div>
-      {canReopen && (
-        // The sheet only corrects logged sets; the workout screen can add the
-        // ones that were never logged (a workout finished too early).
+      {onEdit && (
         <button
-          onClick={() => {
-            navigatingAway.current = true;
-            router.replace(`/workout?edit=${workoutId}`);
-          }}
-          className="glass row mb-4 flex min-h-[44px] w-full items-center justify-between px-4 py-3 text-left text-[17px] text-accent"
+          onClick={onEdit}
+          className="mt-4 w-full rounded-full bg-accent py-3.5 text-[17px] font-semibold text-on-accent"
         >
           Edit in workout
-          <Chevron />
         </button>
       )}
-
-      {groups.map(([exId, exSets]) => {
-        const timed = exSets.some((s) => s.seconds != null);
-        return (
-          <section key={exId} className="mb-4">
-            <div className="mb-1.5 flex items-center justify-between">
-              <h3 className="text-[15px] font-semibold">{exName.get(exId) ?? "Unknown"}</h3>
-              {!timed && (
-                <button
-                  aria-pressed={!!assisted[exId]}
-                  aria-label={`${exName.get(exId) ?? "Exercise"}: assisted (weight is subtracted)`}
-                  onClick={() => setAssisted((p) => ({ ...p, [exId]: !p[exId] }))}
-                  className={`min-h-[30px] rounded-full px-3 text-[13px] font-medium ${
-                    assisted[exId] ? "bg-accent-soft text-accent" : "bg-fill text-ink-dim"
-                  }`}
-                >
-                  Assisted
-                </button>
-              )}
-            </div>
-            <div className="divide-y divide-line/60">
-              {exSets.map((s, i) => (
-                <div
-                  key={s.id}
-                  className="grid grid-cols-[26px_1fr_1fr] items-center gap-3 py-2"
-                >
-                  <span className="disp text-[13px] text-ink-dim">
-                    {s.isWarmup ? "W" : i + 1}
-                  </span>
-                  {timed ? (
-                    <label className="col-span-2 flex items-center gap-2">
-                      <input
-                        className="setfield"
-                        type="number"
-                        inputMode="numeric"
-                        aria-label={`Set ${i + 1} seconds`}
-                        value={draft[s.id]?.seconds ?? ""}
-                        onFocus={(e) => e.currentTarget.select()}
-                        onChange={(e) => setField(s.id, "seconds", e.target.value)}
-                      />
-                      <span className="text-[12px] text-ink-faint">sec</span>
-                    </label>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-1">
-                        <StepButton
-                          dir={-1}
-                          label={`Set ${i + 1} weight down`}
-                          onClick={() => stepWeight(s.id, -1)}
-                        />
-                        <span className="relative flex-1">
-                          {assisted[exId] && (
-                            <span
-                              aria-hidden
-                              className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-[13px] text-ink-faint"
-                            >
-                              −
-                            </span>
-                          )}
-                          <input
-                            className={`setfield ${assisted[exId] ? "pl-4" : ""}`}
-                            type="number"
-                            inputMode="decimal"
-                            step="0.5"
-                            aria-label={`Set ${i + 1} weight in kg`}
-                            value={draft[s.id]?.weight ?? ""}
-                            onFocus={(e) => e.currentTarget.select()}
-                            onChange={(e) => setField(s.id, "weight", e.target.value)}
-                          />
-                        </span>
-                        <StepButton
-                          dir={1}
-                          label={`Set ${i + 1} weight up`}
-                          onClick={() => stepWeight(s.id, 1)}
-                        />
-                      </div>
-                      <label className="flex items-center gap-1.5">
-                        <input
-                          className="setfield"
-                          type="number"
-                          inputMode="numeric"
-                          aria-label={`Set ${i + 1} reps`}
-                          value={draft[s.id]?.reps ?? ""}
-                          onFocus={(e) => e.currentTarget.select()}
-                          onChange={(e) => setField(s.id, "reps", e.target.value)}
-                        />
-                        <span className="text-[12px] text-ink-faint">reps</span>
-                      </label>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
-        );
-      })}
-
-      <div className="mt-4 flex gap-2.5">
-        <button
-          onClick={onClose}
-          className="glass flex-1 rounded-full py-3.5 text-[15px] font-medium text-ink"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={() => void save()}
-          disabled={saving}
-          className="flex-1 rounded-full bg-accent py-3.5 text-[15px] font-semibold text-on-accent disabled:opacity-60"
-        >
-          Save changes
-        </button>
-      </div>
     </Sheet>
   );
-}
-
-function StepButton({
-  dir,
-  label,
-  onClick,
-}: {
-  dir: -1 | 1;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      className="flex h-9 w-8 flex-none items-center justify-center rounded-lg border border-line bg-surface-2 text-[18px] text-ink"
-    >
-      {dir === -1 ? "−" : "+"}
-    </button>
-  );
-}
-
-/** Group a workout's sets by exercise (first-seen order), each exercise's
- * sets ordered by set index, warmups included. */
-function groupForEdit(sets: SetEntry[]): Map<string, SetEntry[]> {
-  const m = new Map<string, SetEntry[]>();
-  for (const s of sets) {
-    const list = m.get(s.exerciseId) ?? [];
-    list.push(s);
-    m.set(s.exerciseId, list);
-  }
-  for (const list of m.values()) list.sort((a, b) => a.setIndex - b.setIndex);
-  return m;
 }
 
 function Calendar({

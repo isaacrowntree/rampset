@@ -167,10 +167,17 @@ function WorkoutScreen() {
       await saveFinishedWorkout(session.workout.id);
       scheduleBackup(user.id, user.email);
       navigatingAway.current = true;
-      router.replace("/history");
+      leaveEdit();
     } finally {
       finishing.current = false;
     }
+  };
+
+  /** Back out of editing a past workout to History — popping the entry
+   * History pushed, or (deep-linked, nothing behind) replacing it. */
+  const leaveEdit = () => {
+    if (window.history.length > 1) router.back();
+    else router.replace("/history");
   };
 
   /** Logging a set starts the rest — except when correcting a past workout:
@@ -227,7 +234,7 @@ function WorkoutScreen() {
     <div className="pb-[calc(env(safe-area-inset-bottom)+132px)]">
       <header className="nav-inline sticky top-0 z-40 -mx-4 mb-2 flex items-center gap-1 px-2 pb-1.5 pt-[max(env(safe-area-inset-top),8px)]">
         <button
-          onClick={editId ? () => router.replace("/history") : minimize}
+          onClick={editId ? leaveEdit : minimize}
           aria-label={
             editId ? "Back — logged changes are kept" : "Minimize workout — your progress is kept"
           }
