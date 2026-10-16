@@ -15,8 +15,8 @@ import {
 } from "@/lib/deload";
 import { getActiveWorkout } from "@/db/activeWorkout";
 import type { ProgramDay, ProgramExercise, Exercise } from "@/lib/types";
-import { PlateDiagram } from "@/components/PlateDiagram";
 import { loadColor } from "@/lib/plates";
+import { LiftLoop, signatureLift } from "@/components/LiftLoop";
 import { useGymPlates } from "@/lib/gymPlates";
 
 export default function HomePage() {
@@ -86,6 +86,7 @@ export default function HomePage() {
       activeSetCount,
       deloadOffered,
       workoutCount: finished.length,
+
     };
   }, [user?.id]);
 
@@ -191,8 +192,8 @@ export default function HomePage() {
   );
 }
 
-/** The suggested next session — the one place the app gets loud: the bar
- * loaded for its heaviest lift, washed in that plate's color. */
+/** The suggested next session, washed in its heaviest lift's plate color,
+ * with a lifter looping the day's signature lift. */
 function NextCard({
   day,
   rows,
@@ -207,7 +208,14 @@ function NextCard({
     .sort((a, b) => (b.pe.workingWeightKg ?? 0) - (a.pe.workingWeightKg ?? 0))[0];
   const gymPlates = useGymPlates();
   const tone = loadColor(heaviest?.pe.workingWeightKg, 20, gymPlates);
-
+  // The day's signature lift, looping — bench on A, deadlift on B — with
+  // the bar wearing that lift's plate color.
+  const kind = signatureLift(rows.map(({ ex }) => ex.name));
+  const signature = rows.find(({ ex }) =>
+    kind === "bench" ? /bench/i.test(ex.name) : kind === "deadlift" ? /deadlift/i.test(ex.name) : /squat/i.test(ex.name),
+  );
+  const discColor =
+    loadColor(signature?.pe.workingWeightKg, 20, gymPlates)?.fill ?? "var(--accent)";
   return (
     <section
       className="glass relative overflow-hidden p-5"
@@ -222,16 +230,14 @@ function NextCard({
       <h3 className="large-title !text-[28px] !leading-[34px]">{day.name}</h3>
       <p className="mt-0.5 text-[15px] text-ink-dim">
         {rows.length} exercise{rows.length === 1 ? "" : "s"}
-        {heaviest ? ` · ${heaviest.ex.name} ${heaviest.pe.workingWeightKg}kg` : ""}
       </p>
 
-      {heaviest && (
-        <div className="-mx-1 mt-4">
-          <PlateDiagram totalKg={heaviest.pe.workingWeightKg!} />
-        </div>
-      )}
+      <div className="mt-3">
+        <LiftLoop kind={kind} plateColor={discColor} />
+      </div>
 
-      <ul className="mt-4 divide-y divide-line">
+
+      <ul className="mt-3 divide-y divide-line">
         {rows.map(({ pe, ex }) => (
           <li key={pe.id} className="flex items-center justify-between gap-3 py-2.5">
             <span className="flex min-w-0 items-center gap-2.5">
@@ -242,7 +248,9 @@ function NextCard({
               />
               <span className="truncate text-[16px]">{ex.name}</span>
             </span>
-            <span className="mono flex-none text-[15px] text-ink-dim">{targetLabel(pe)}</span>
+            <span className="flex flex-none items-center gap-2">
+              <span className="mono text-[15px] text-ink-dim">{targetLabel(pe)}</span>
+            </span>
           </li>
         ))}
       </ul>
