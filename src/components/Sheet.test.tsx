@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Sheet } from "./Sheet";
 
@@ -59,14 +60,33 @@ describe("Sheet (native bottom sheet)", () => {
  * the router navigated, it overwrote our entry with the new route, and
  * popping then walks the user BACK to the screen they just left. */
 describe("Sheet (history entry)", () => {
-  it("pops its own entry when the user dismisses it", () => {
+  it("pops its own entry when the user dismisses it", async () => {
     const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
     const { unmount } = render(<Harness />);
     unmount();
+    await new Promise((r) => setTimeout(r, 0));
     expect(back).toHaveBeenCalledOnce();
   });
 
-  it("does not pop when the router already replaced the entry", () => {
+  it("keeps one entry, and stays open, through StrictMode's double mount", async () => {
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    const push = vi.spyOn(window.history, "pushState");
+    const onClose = vi.fn();
+    const { unmount } = render(
+      <StrictMode>
+        <Harness onClose={onClose} />
+      </StrictMode>,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(push).toHaveBeenCalledOnce();
+    expect(back).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    // Let the teardown's pop land on the spy, not the next test.
+    unmount();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+
+  it("does not pop when the router already replaced the entry", async () => {
     const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
     const navigatingAway = { current: false };
     const { unmount } = render(
@@ -79,7 +99,54 @@ describe("Sheet (history entry)", () => {
     navigatingAway.current = true;
     window.history.replaceState({}, "", "/history");
     unmount();
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(back).not.toHaveBeenCalled();
+  });
+
+  it("closes only the top sheet when one is stacked on another", async () => {
+    const outer = vi.fn();
+    const inner = vi.fn();
+    render(
+      <>
+        <Sheet label="Outer" onClose={outer}>
+          <button>a</button>
+        </Sheet>
+        <Sheet label="Inner" onClose={inner}>
+          <button>b</button>
+        </Sheet>
+      </>,
+    );
+    await act(async () => {
+      window.history.back();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(inner).toHaveBeenCalledOnce();
+    expect(outer).not.toHaveBeenCalled();
+  });
+
+  it("hands its entry to a sheet that replaces it, which stays open", async () => {
+    // Let the previous test's teardown pop land before counting.
+    await new Promise((r) => setTimeout(r, 0));
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    const push = vi.spyOn(window.history, "pushState");
+    const editClose = vi.fn();
+    const { rerender, unmount } = render(
+      <Sheet label="Summary" onClose={() => {}}>
+        <button>a</button>
+      </Sheet>,
+    );
+    // Summary → Edit in one commit, as History's "Edit workout" does.
+    rerender(
+      <Sheet key="edit" label="Edit" onClose={editClose}>
+        <button>b</button>
+      </Sheet>,
+    );
+    await act(() => new Promise((r) => setTimeout(r, 10)));
+    expect(push).toHaveBeenCalledOnce();
+    expect(back).not.toHaveBeenCalled();
+    expect(editClose).not.toHaveBeenCalled();
+    unmount();
+    await new Promise((r) => setTimeout(r, 0));
   });
 });
