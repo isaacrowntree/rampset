@@ -135,7 +135,7 @@ export function LiftLoop({ kind, plateColor }: { kind: LiftKind; plateColor: str
     <svg
       ref={svgRef}
       viewBox="40 10 120 94"
-      className="mx-auto block h-[120px] w-full max-w-[180px]"
+      className="mx-auto block h-[110px] w-full max-w-[170px]"
       aria-hidden
     >
       {/* floor */}
@@ -184,11 +184,22 @@ export function LiftLoop({ kind, plateColor }: { kind: LiftKind; plateColor: str
   );
 }
 
-/** The day's signature lift, by what's in it: bench for A-days, deadlift for
- * B-days, squat when neither is there. */
-export function signatureLift(exerciseNames: string[]): LiftKind {
-  const has = (re: RegExp) => exerciseNames.some((n) => re.test(n));
-  if (has(/bench/i)) return "bench";
-  if (has(/deadlift/i)) return "deadlift";
-  return "squat";
+const PATTERN: Record<LiftKind, RegExp> = {
+  bench: /bench/i,
+  deadlift: /deadlift/i,
+  squat: /squat/i,
+};
+
+/** The day's signature lifts, side by side: bench and squat on A-days, squat
+ * and deadlift on B-days, squat alone when neither is there. */
+export function signatureLifts(exerciseNames: string[]): LiftKind[] {
+  const has = (k: LiftKind) => exerciseNames.some((n) => PATTERN[k].test(n));
+  if (has("bench")) return has("squat") ? ["bench", "squat"] : ["bench"];
+  if (has("deadlift")) return has("squat") ? ["squat", "deadlift"] : ["deadlift"];
+  return ["squat"];
+}
+
+/** Which exercise name a loop stands for (to color its disc by load). */
+export function matchesLift(kind: LiftKind, exerciseName: string): boolean {
+  return PATTERN[kind].test(exerciseName);
 }

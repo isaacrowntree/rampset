@@ -16,7 +16,7 @@ import {
 import { getActiveWorkout } from "@/db/activeWorkout";
 import type { ProgramDay, ProgramExercise, Exercise } from "@/lib/types";
 import { loadColor } from "@/lib/plates";
-import { LiftLoop, signatureLift } from "@/components/LiftLoop";
+import { LiftLoop, matchesLift, signatureLifts } from "@/components/LiftLoop";
 import { useGymPlates } from "@/lib/gymPlates";
 
 export default function HomePage() {
@@ -193,7 +193,7 @@ export default function HomePage() {
 }
 
 /** The suggested next session, washed in its heaviest lift's plate color,
- * with a lifter looping the day's signature lift. */
+ * with lifters looping the day's signature lifts. */
 function NextCard({
   day,
   rows,
@@ -208,14 +208,15 @@ function NextCard({
     .sort((a, b) => (b.pe.workingWeightKg ?? 0) - (a.pe.workingWeightKg ?? 0))[0];
   const gymPlates = useGymPlates();
   const tone = loadColor(heaviest?.pe.workingWeightKg, 20, gymPlates);
-  // The day's signature lift, looping — bench on A, deadlift on B — with
-  // the bar wearing that lift's plate color.
-  const kind = signatureLift(rows.map(({ ex }) => ex.name));
-  const signature = rows.find(({ ex }) =>
-    kind === "bench" ? /bench/i.test(ex.name) : kind === "deadlift" ? /deadlift/i.test(ex.name) : /squat/i.test(ex.name),
-  );
-  const discColor =
-    loadColor(signature?.pe.workingWeightKg, 20, gymPlates)?.fill ?? "var(--accent)";
+  // The day's signature lifts, looping side by side — bench and squat on A,
+  // squat and deadlift on B — each bar wearing its own load's plate color.
+  const loops = signatureLifts(rows.map(({ ex }) => ex.name)).map((kind) => {
+    const row = rows.find(({ ex }) => matchesLift(kind, ex.name));
+    return {
+      kind,
+      color: loadColor(row?.pe.workingWeightKg, 20, gymPlates)?.fill ?? "var(--accent)",
+    };
+  });
   return (
     <section
       className="glass relative overflow-hidden p-5"
@@ -232,8 +233,10 @@ function NextCard({
         {rows.length} exercise{rows.length === 1 ? "" : "s"}
       </p>
 
-      <div className="mt-3">
-        <LiftLoop kind={kind} plateColor={discColor} />
+      <div className={`mt-3 grid gap-2 ${loops.length > 1 ? "grid-cols-2" : ""}`}>
+        {loops.map(({ kind, color }) => (
+          <LiftLoop key={kind} kind={kind} plateColor={color} />
+        ))}
       </div>
 
 
