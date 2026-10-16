@@ -8,13 +8,15 @@
  * rows it never saw. But union can only ever ADD, so without this a deleted
  * workout walks back in from whichever device still holds it. */
 
-import { handleOpsByKind, type OpStore } from "durable-sync/server";
+import type { StoredOp } from "durable-sync/server";
 
 export const DELETE_WORKOUT = "deleteWorkout";
 
-export function handleTombstones(store: OpStore): { workoutIds: string[] } {
-  const ids = handleOpsByKind(store, DELETE_WORKOUT)
-    .ops.map((o) => (o.payload as { workoutId?: unknown } | null)?.workoutId)
+/** The workout ids a journal's `deleteWorkout` ops removed — pass it
+ * `(await journal.opsByKind(DELETE_WORKOUT)).ops`. */
+export function tombstonedWorkoutIds(ops: StoredOp[]): string[] {
+  const ids = ops
+    .map((o) => (o.payload as { workoutId?: unknown } | null)?.workoutId)
     .filter((id): id is string => typeof id === "string" && id !== "");
-  return { workoutIds: [...new Set(ids)] };
+  return [...new Set(ids)];
 }

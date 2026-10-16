@@ -3,6 +3,8 @@
  * whole app, so these routes are already authenticated — we just read the
  * identity header Access injects. */
 
+import { journalFor } from "@/server/journal";
+import { DELETE_WORKOUT, tombstonedWorkoutIds } from "@/server/tombstones";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
   storeBackup,
@@ -27,14 +29,6 @@ function bucket(): BackupBucket | null {
   return (env as { BACKUPS?: BackupBucket }).BACKUPS ?? null;
 }
 
-interface JournalStub {
-  fetch(input: string): Promise<Response>;
-}
-interface JournalNamespace {
-  idFromName(name: string): unknown;
-  get(id: unknown): JournalStub;
-}
-
 /** Which workouts are deleted, per the journal.
  *
  * latest.json is merged by union so a device that's behind can't erase rows it
@@ -43,13 +37,10 @@ interface JournalNamespace {
  * none) would resurrect deletions, so a journal we can't reach aborts the
  * publish rather than quietly undoing one. */
 async function tombstonesFor(email: string): Promise<string[]> {
-  const { env } = getCloudflareContext();
-  const ns = (env as { SYNC_JOURNAL?: JournalNamespace }).SYNC_JOURNAL;
-  if (!ns) return [];
-  const journal = ns.get(ns.idFromName(email.toLowerCase()));
-  const res = await journal.fetch("https://journal/tombstones");
-  const body = (await res.json()) as { workoutIds?: string[] };
-  return body.workoutIds ?? [];
+  const journal = journalFor(email);
+  if (!journal) return [];
+  const { ops } = await journal.opsByKind(DELETE_WORKOUT);
+  return tombstonedWorkoutIds(ops);
 }
 
 export async function POST(req: Request) {

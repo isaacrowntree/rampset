@@ -5,28 +5,19 @@
 // tsconfig (wrangler bundles it with esbuild).
 import handler from "./.open-next/worker.js";
 import { SyncJournal as OpLog } from "durable-sync/server";
-import { handleTombstones } from "./src/server/tombstones";
 
 /** One instance per user (idFromName(email)): the single-threaded
  * consistency point that orders that user's sync ops.
  *
- * The log itself is durable-sync — push, pull, epochs, reset. All we add is
- * the one thing it can't know: what a `deleteWorkout` op deleted. It never
- * interprets payloads, which is exactly what keeps it a primitive.
+ * The log is durable-sync's journal, a native Durable Object called over RPC
+ * — `push`, `pull`, `opsByKind` — from the API routes. What a `deleteWorkout`
+ * op deleted is ours to interpret (src/server/tombstones.ts); the journal
+ * never reads payloads, which is what keeps it a primitive.
  *
  * The class name is unchanged, so the existing Durable Object and its
- * migration tag carry straight over — and the SQL schema is byte-identical,
- * so the live journal survives with no migration.
+ * migration tag carry straight over, and the SQL schema is the same, so the
+ * live journal survives with no migration.
  */
-export class SyncJournal extends OpLog {
-  async fetch(request: Request): Promise<Response> {
-    // The backup merge unions rows and so can never drop one; the journal is
-    // the only authority on what was deleted.
-    if (new URL(request.url).pathname === "/tombstones") {
-      return Response.json(handleTombstones(this.store));
-    }
-    return super.fetch(request);
-  }
-}
+export class SyncJournal extends OpLog {}
 
 export default handler;
