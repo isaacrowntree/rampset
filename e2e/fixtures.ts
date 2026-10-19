@@ -95,7 +95,7 @@ export async function emailedCode(since: number): Promise<string> {
         return [];
       }
     })().sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
-    const code = files.length ? /Your code is (\d{6})/.exec(readFileSync(files[0], "utf8"))?.[1] : undefined;
+    const code = files.length ? /verification code is (\d{6})/.exec(readFileSync(files[0], "utf8"))?.[1] : undefined;
     if (code) return code;
     await new Promise((r) => setTimeout(r, 200));
   }

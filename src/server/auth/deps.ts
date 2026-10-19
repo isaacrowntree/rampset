@@ -110,15 +110,15 @@ function emailSender(binding: EmailBinding, from: string) {
   return async (to: string, code: string, purpose: CodePurpose): Promise<void> => {
     const what =
       purpose === "recover" ? "sign back in to Rampset" : "confirm this as your Rampset recovery email";
-    const text = `Your code is ${code}\n\nEnter it in the app to ${what}. It expires in 10 minutes.\n\nIf you didn't ask for this, ignore this email — nothing changes without the code.`;
-    const html = `<p style="font:16px/1.5 -apple-system,system-ui,sans-serif">Your code is</p>
+    const text = `Your Rampset verification code is ${code}\n\nEnter it in the app to ${what}. It expires in 10 minutes.\n\nIf you didn't ask for this, ignore this email — nothing changes without the code.`;
+    const html = `<p style="font:16px/1.5 -apple-system,system-ui,sans-serif">Your Rampset verification code is</p>
 <p style="font:600 32px/1.2 ui-monospace,Menlo,monospace;letter-spacing:4px">${code}</p>
 <p style="font:16px/1.5 -apple-system,system-ui,sans-serif">Enter it in the app to ${what}. It expires in 10 minutes.</p>
 <p style="font:14px/1.5 -apple-system,system-ui,sans-serif;color:#666">If you didn't ask for this, ignore this email — nothing changes without the code.</p>`;
     await binding.send({
       to,
       from: { email: from, name: "Rampset" },
-      subject: `${code} is your Rampset code`,
+      subject: `${code} is your Rampset verification code`,
       text,
       html,
     });
