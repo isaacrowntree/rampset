@@ -1,8 +1,7 @@
 /** Cloud backup endpoint. Runs on the Worker; the R2 bucket holds one
- * namespace per Cloudflare Access identity. Access sits in front of the
- * whole app, so these routes are already authenticated — we just read the
- * identity header Access injects. */
+ * namespace per account, chosen by the session — never by the request. */
 
+import { requireAccount } from "@/server/auth/deps";
 import { journalFor } from "@/server/journal";
 import { DELETE_WORKOUT, tombstonedWorkoutIds } from "@/server/tombstones";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
@@ -13,16 +12,6 @@ import {
 } from "@/server/backupStore";
 
 export const dynamic = "force-dynamic";
-
-function identityFrom(req: Request): string | null {
-  const email = req.headers.get("cf-access-authenticated-user-email");
-  if (email) return email;
-  // Local dev has no Access in front; accept a dev header there only.
-  if (process.env.NODE_ENV === "development") {
-    return req.headers.get("x-liftlog-dev-user");
-  }
-  return null;
-}
 
 function bucket(): BackupBucket | null {
   const { env } = getCloudflareContext();
@@ -36,18 +25,16 @@ function bucket(): BackupBucket | null {
  * back in from whichever device still holds it. Failing closed (returning
  * none) would resurrect deletions, so a journal we can't reach aborts the
  * publish rather than quietly undoing one. */
-async function tombstonesFor(email: string): Promise<string[]> {
-  const journal = journalFor(email);
+async function tombstonesFor(userId: string): Promise<string[]> {
+  const journal = journalFor(userId);
   if (!journal) return [];
   const { ops } = await journal.opsByKind(DELETE_WORKOUT);
   return tombstonedWorkoutIds(ops);
 }
 
 export async function POST(req: Request) {
-  const email = identityFrom(req);
-  if (!email) {
-    return Response.json({ error: "No authenticated identity" }, { status: 401 });
-  }
+  const userId = await requireAccount(req);
+  if (userId instanceof Response) return userId;
   const backups = bucket();
   if (!backups) {
     return Response.json({ error: "Backup storage not configured" }, { status: 503 });
@@ -55,10 +42,10 @@ export async function POST(req: Request) {
   try {
     const summary = await storeBackup(
       backups,
-      email,
+      userId,
       await req.text(),
       new Date(),
-      await tombstonesFor(email),
+      await tombstonesFor(userId),
     );
     return Response.json({ ok: true, ...summary });
   } catch (e) {
@@ -70,15 +57,13 @@ export async function POST(req: Request) {
 }
 
 export async function GET(req: Request) {
-  const email = identityFrom(req);
-  if (!email) {
-    return Response.json({ error: "No authenticated identity" }, { status: 401 });
-  }
+  const userId = await requireAccount(req);
+  if (userId instanceof Response) return userId;
   const backups = bucket();
   if (!backups) {
     return Response.json({ error: "Backup storage not configured" }, { status: 503 });
   }
-  const json = await fetchLatestBackup(backups, email);
+  const json = await fetchLatestBackup(backups, userId);
   if (json === null) {
     return Response.json({ error: "No cloud backup yet" }, { status: 404 });
   }

@@ -1,4 +1,4 @@
-/** R2-backed backup snapshots, one namespace per Access identity.
+/** R2-backed backup snapshots, one namespace per account.
  * Pure functions over a minimal bucket interface so the logic is testable
  * without a Workers runtime. */
 
@@ -10,6 +10,12 @@ export interface PutOptions {
 export interface BackupBucket {
   put(key: string, value: string, options?: PutOptions): Promise<unknown | null>;
   get(key: string): Promise<{ text(): Promise<string>; etag?: string } | null>;
+  list(options: { prefix: string; cursor?: string }): Promise<{
+    objects: { key: string }[];
+    truncated: boolean;
+    cursor?: string;
+  }>;
+  delete(keys: string | string[]): Promise<void>;
 }
 
 interface Row {
@@ -71,14 +77,16 @@ export function mergeBackups(
   return { ...incoming, workouts, sets, exercises };
 }
 
-const MAX_BYTES = 50 * 1024 * 1024; // a decade of workouts is ~2MB; 50MB is generous
+// A decade of workouts is ~2MB. Anyone can sign up, so this is also the most
+// one account can make us store per upload.
+const MAX_BYTES = 10 * 1024 * 1024;
 
-function sanitizeEmail(email: string): string {
-  return email.toLowerCase().replace(/[^a-z0-9@._+-]/g, "_");
+function sanitize(userId: string): string {
+  return userId.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-export function backupKeys(email: string, now: Date) {
-  const who = sanitizeEmail(email);
+export function backupKeys(userId: string, now: Date) {
+  const who = sanitize(userId);
   const stamp = now.toISOString().slice(0, 19).replaceAll(":", "-");
   return {
     // Dated snapshots live under snapshots/ so an R2 lifecycle rule can
@@ -95,7 +103,7 @@ export interface StoredSummary {
 
 export async function storeBackup(
   bucket: BackupBucket,
-  email: string,
+  userId: string,
   json: string,
   now: Date,
   /** Workouts the journal says are deleted — union can't drop rows on its own. */
@@ -109,7 +117,7 @@ export async function storeBackup(
     throw new Error("Not a LiftLog backup");
   }
 
-  const keys = backupKeys(email, now);
+  const keys = backupKeys(userId, now);
 
   // The dated snapshot is this device's own view, verbatim: the forensic
   // record of what it held. Never merged — that's what makes it a rollback.
@@ -139,9 +147,21 @@ export async function storeBackup(
 
 export async function fetchLatestBackup(
   bucket: BackupBucket,
-  email: string,
+  userId: string,
 ): Promise<string | null> {
-  const keys = backupKeys(email, new Date(0));
+  const keys = backupKeys(userId, new Date(0));
   const obj = await bucket.get(keys.latest);
   return obj ? obj.text() : null;
+}
+
+/** Every object an account has: its latest view and all dated snapshots. */
+export async function deleteBackups(bucket: BackupBucket, userId: string): Promise<void> {
+  const who = sanitize(userId);
+  await bucket.delete(backupKeys(userId, new Date(0)).latest);
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix: `snapshots/${who}/`, cursor });
+    if (page.objects.length) await bucket.delete(page.objects.map((o) => o.key));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
 }

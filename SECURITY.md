@@ -12,16 +12,18 @@ soon as reasonably possible.
 ## Scope
 
 Rampset is a **self-hosted** app: each operator runs their own instance on
-their own Cloudflare account, sets their own secrets, and puts their own
-Cloudflare Access policy in front of it. That means:
+their own Cloudflare account and sets their own secrets. Anyone can create an
+account on an instance; passkeys are the login, with an optional recovery
+email. That means:
 
-- **In scope:** flaws in this codebase — e.g. a way to read another user's data
-  that isn't blocked by Cloudflare Access, a broken backup/sync authorization
-  check, or an XSS/injection in the app itself.
-- **Out of scope / operator responsibility:** your Cloudflare Access
-  configuration, your Worker secrets, your `.env.local`, and anything specific
-  to how you deployed it. Never commit secrets — `.env.local` and `.dev.vars`
-  are gitignored for this reason.
+- **In scope:** flaws in this codebase — e.g. reading or writing another
+  account's data, a way around a passkey or a recovery code, session or
+  cookie weaknesses, a broken sync/backup authorization check, or an
+  XSS/injection in the app itself.
+- **Out of scope / operator responsibility:** your Worker secrets and vars,
+  your email-sending domain, your Turnstile and rate-limit settings, and
+  anything specific to how you deployed it. Never commit secrets — `.dev.vars`
+  is gitignored for this reason.
 
 ## Supported versions
 

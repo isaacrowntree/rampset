@@ -1,0 +1,10 @@
+{
+  // The integration suite runs inside workerd, so it types against the
+  // Workers runtime and cloudflare:test rather than the app's DOM/Next setup.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/vitest-plugin/types"]
+  },
+  "include": ["./**/*.ts", "../../cloudflare-env.d.ts"],
+  "exclude": []
+}

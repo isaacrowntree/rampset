@@ -351,6 +351,17 @@ export const PROGRAM_TEMPLATES: ProgramTemplate[] = [
       },
     ],
   },
+  // Free-form: no prescription and no progression engine. It starts as one
+  // empty day — the lifter builds days and exercises in the Program tab, and
+  // every set prefills from their last workout. The id matches the routine
+  // programs seeded before templates existed, so those read as this one.
+  {
+    id: "routine",
+    name: "Custom routine",
+    mode: "routine",
+    blurb: "Build your own days and exercises. No automatic progression — every set prefills from your last workout.",
+    days: [{ key: "1", name: "Day 1", exercises: [] }],
+  },
 ];
 
 export function getTemplate(id: string): ProgramTemplate | undefined {

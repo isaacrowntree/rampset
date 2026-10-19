@@ -1,8 +1,11 @@
 "use client";
 
-/** Active-user context. Behind Cloudflare Access the authenticated email
- * (via /api/me) picks the user; the switcher and saved selection are the
- * fallback for local dev and offline launches. */
+/** This device's account. One account per device: it's whoever signed in here.
+ *
+ * Boot never waits on the network when the device already has an account —
+ * the gym has no signal, and the data is local. The session check runs
+ * behind it and only decides whether writes may leave the device. A device
+ * with no account shows onboarding instead of the app. */
 
 import {
   createContext,
@@ -12,117 +15,85 @@ import {
   type ReactNode,
 } from "react";
 import { db } from "@/db/db";
-import { seedIfEmpty, reconcileUsers } from "@/db/seed";
-import { pickActiveUser } from "@/lib/identity";
-import { loadUserConfig, type UserConfig } from "@/config/users";
+import { adoptAccount, localUser, userFromAccount, wipeDevice, type Account } from "@/db/account";
+import { currentAccount } from "@/lib/auth";
+import { setSessionAccount } from "@/lib/identityGate";
 import type { User } from "@/lib/types";
+
+/** signed-in: the server confirmed this device's account. signed-out: it
+ * didn't — sync and backup are paused until the lifter signs in again.
+ * unknown: we haven't been able to ask (offline). */
+export type SessionState = "signed-in" | "signed-out" | "unknown";
 
 interface UserContextValue {
   user: User | null;
-  users: User[];
-  switchUser: (id: string) => void;
   ready: boolean;
+  session: SessionState;
+  /** Make `account` this device's: after creating it, signing in, or recovering. */
+  adopt: (account: Account) => Promise<void>;
+  /** The server returned a newer copy of the account (name, email, theme). */
+  refresh: (account: Account) => Promise<void>;
+  /** Change this device's copy now — offline included; the server follows. */
+  patchUser: (patch: Partial<Pick<User, "theme" | "name">>) => Promise<void>;
+  /** Forget this device's account and data, and start over. */
+  leave: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextValue>({
   user: null,
-  users: [],
-  switchUser: () => {},
   ready: false,
+  session: "unknown",
+  adopt: async () => {},
+  refresh: async () => {},
+  patchUser: async () => {},
+  leave: async () => {},
 });
 
-const ACTIVE_KEY = "liftlog.activeUser";
-const CONFIG_CACHE_KEY = "liftlog.userConfig";
-
 export function UserProvider({ children }: { children: ReactNode }) {
-  const [users, setUsers] = useState<User[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
+  const [session, setSession] = useState<SessionState>("unknown");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Config and identity fetch IN PARALLEL — cold start must not pay
-      // sequential network round-trips. Both fail fast offline.
-      const [configRes, meRes] = await Promise.allSettled([
-        fetch("/api/config", { signal: AbortSignal.timeout(2500) }),
-        fetch("/api/me", { signal: AbortSignal.timeout(2000) }),
-      ]);
-
-      let config: UserConfig[] | null = null;
-      if (configRes.status === "fulfilled" && configRes.value.ok) {
-        try {
-          const body = (await configRes.value.json()) as { users: UserConfig[] | null };
-          if (Array.isArray(body.users) && body.users.length > 0) {
-            config = body.users;
-            localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(body.users));
-          }
-        } catch {
-          // malformed — fall through to cache
-        }
-      }
-      if (!config) {
-        try {
-          const cached = localStorage.getItem(CONFIG_CACHE_KEY);
-          if (cached) config = JSON.parse(cached) as UserConfig[];
-        } catch {
-          // corrupted cache — ignore
-        }
-      }
-      const effective = config ?? loadUserConfig();
-
-      await seedIfEmpty(effective);
-      await reconcileUsers(effective);
-      const all = await db.users.toArray();
+      const local = await localUser();
       if (cancelled) return;
-      setUsers(all);
-
-      let accessEmail: string | null = null;
-      if (meRes.status === "fulfilled" && meRes.value.ok) {
-        try {
-          accessEmail = ((await meRes.value.json()) as { email: string | null }).email;
-        } catch {
-          // saved selection decides
-        }
-      }
-      if (cancelled) return;
-
-      // Publish the resolved identity before anything can sync: writes leave
-      // this device filed under the Access session, not the selected avatar.
-      const { setAccessIdentity } = await import("@/lib/identityGate");
-      setAccessIdentity(accessEmail);
-
-      const savedId = localStorage.getItem(ACTIVE_KEY);
-      const active = pickActiveUser(all, accessEmail, savedId);
-      if (active) localStorage.setItem(ACTIVE_KEY, active.id);
-
-      // Fresh device? Auto-restore BLOCKS first paint only when the device
-      // is empty (there is nothing to show anyway). A device with data
-      // renders immediately.
-      if (active) {
-        const workoutCount = await db.workouts.where({ userId: active.id }).count();
-        if (workoutCount === 0) {
-          const [{ autoRestoreIfEmpty }, { getLatestCloudBackup }] = await Promise.all([
-            import("@/db/autoRestore"),
-            import("@/lib/cloudBackup"),
-          ]);
-          const restored = await autoRestoreIfEmpty(active.id, () =>
-            getLatestCloudBackup(active.email),
-          );
-          if (restored) {
-            console.info(
-              `Rampset: restored ${restored.workouts} workouts from cloud backup`,
-            );
-          }
-        }
-      }
-      if (cancelled) return;
-
-      setUser(active);
+      // Never wait on the network to show something: the app for a device
+      // with an account, onboarding for one without. A live session found
+      // below adopts on top.
+      setUser(local);
       setReady(true);
-      // Sync is owned by <SyncEngine>, which runs on every foregrounding —
-      // not just here. A once-per-mount sync never fires again inside a
-      // resumed iOS PWA.
+
+      const account = await currentAccount();
+      if (cancelled) return;
+
+      if (local) {
+        if (account === undefined) return; // offline: carry on as we were
+        if (account?.id === local.id) {
+          setSessionAccount(account.id);
+          setSession("signed-in");
+          // Name, recovery email and theme may have changed on another device.
+          await db.users.put(userFromAccount(account));
+          if (!cancelled) setUser(userFromAccount(account));
+        } else {
+          // Signed out — or, rarely, signed in as someone else in another
+          // tab. Either way this device's data must not go out under it.
+          setSessionAccount(null);
+          setSession("signed-out");
+        }
+        return;
+      }
+
+      // No account on this device. A live session (data cleared, or a second
+      // tab finished onboarding) adopts straight in; otherwise onboarding.
+      if (account) {
+        const adopted = await adoptAndRestore(account);
+        if (cancelled) return;
+        setSessionAccount(account.id);
+        setSession("signed-in");
+        setUser(adopted);
+      }
     })();
     return () => {
       cancelled = true;
@@ -146,18 +117,60 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
-  const switchUser = (id: string) => {
-    const next = users.find((u) => u.id === id);
-    if (!next) return;
-    localStorage.setItem(ACTIVE_KEY, id);
+  const adopt = async (account: Account) => {
+    // One account per device: signing in as someone else replaces this one.
+    // The session cookie is already theirs, so a fresh boot adopts them.
+    if (user && user.id !== account.id) {
+      await wipeDevice();
+      window.location.replace("/");
+      return;
+    }
+    const adopted = await adoptAndRestore(account);
+    setSessionAccount(account.id);
+    setSession("signed-in");
+    setUser(adopted);
+    setReady(true);
+  };
+
+  const refresh = async (account: Account) => {
+    const next = userFromAccount(account);
+    await db.users.put(next);
     setUser(next);
   };
 
+  const patchUser = async (patch: Partial<Pick<User, "theme" | "name">>) => {
+    if (!user) return;
+    const next = { ...user, ...patch };
+    await db.users.put(next);
+    setUser(next);
+  };
+
+  const leave = async () => {
+    setSessionAccount(null);
+    await wipeDevice();
+    // A clean start: every module-level cache (sync engines, live queries)
+    // still points at the deleted database.
+    window.location.replace("/");
+  };
+
   return (
-    <UserContext.Provider value={{ user, users, switchUser, ready }}>
+    <UserContext.Provider value={{ user, ready, session, adopt, refresh, patchUser, leave }}>
       {children}
     </UserContext.Provider>
   );
+}
+
+/** Set up the device for `account`, then — when it has no workouts yet, i.e.
+ * a new phone — fill it from the cloud snapshot. Sync brings anything newer. */
+async function adoptAndRestore(account: Account): Promise<User> {
+  const adopted = await adoptAccount(account);
+  const [{ autoRestoreIfEmpty }, { getLatestCloudBackup }] = await Promise.all([
+    import("@/db/autoRestore"),
+    import("@/lib/cloudBackup"),
+  ]);
+  const restored = await autoRestoreIfEmpty(adopted.id, getLatestCloudBackup);
+  if (restored) console.info(`Rampset: restored ${restored.workouts} workouts from cloud backup`);
+  return adopted;
 }
 
 export function useUser(): UserContextValue {

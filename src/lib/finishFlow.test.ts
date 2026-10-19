@@ -1,14 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "@/db/db";
-import { seedIfEmpty } from "@/db/seed";
+import { seedIfEmpty } from "@/test/seed";
 import { startWorkout, logSet } from "@/db/session";
 import { activeWorkoutKey } from "@/db/activeWorkout";
 import { takeJustFinished } from "@/lib/justFinished";
 import { completeWorkout } from "@/lib/finishFlow";
 
 const USER1 = "user-1";
-const EMAIL = "user1@example.com";
 
 async function aLoggedWorkout() {
   const dayB = await db.programDays.get("day-5x5-b-user-1");
@@ -42,7 +41,7 @@ describe("completeWorkout", () => {
     });
 
     await completeWorkout(
-      { userId: USER1, email: EMAIL, workoutId, workSets: 1, tonnageKg: 137.5 },
+      { userId: USER1, workoutId, workSets: 1, tonnageKg: 137.5 },
       { navigate, pushBackground },
     );
 
@@ -72,7 +71,7 @@ describe("completeWorkout", () => {
     });
 
     await completeWorkout(
-      { userId: USER1, email: EMAIL, workoutId, workSets: 1, tonnageKg: 137.5 },
+      { userId: USER1, workoutId, workSets: 1, tonnageKg: 137.5 },
       { navigate, pushBackground, enqueue },
     );
 
@@ -92,7 +91,7 @@ describe("completeWorkout", () => {
     const pushBackground = vi.fn();
 
     await completeWorkout(
-      { userId: USER1, email: EMAIL, workoutId: s.workout.id, workSets: 0, tonnageKg: 0 },
+      { userId: USER1, workoutId: s.workout.id, workSets: 0, tonnageKg: 0 },
       { navigate, pushBackground },
     );
 

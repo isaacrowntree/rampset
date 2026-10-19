@@ -2,7 +2,7 @@
 
 import { Switch } from "@/components/Switch";
 import { useGymHas25s, setGymHas25s } from "@/lib/gymPlates";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "@/db/db";
 import { useUser } from "@/state/UserContext";
@@ -10,14 +10,36 @@ import { AppHeader } from "@/components/AppHeader";
 import { exportBackup, restoreBackup } from "@/db/backup";
 import { backupToCloud, restoreFromCloud } from "@/lib/cloudBackup";
 import { ConfirmSheet } from "@/components/ConfirmSheet";
+import { Chevron } from "@/components/Chevron";
 import { PROGRAM_TEMPLATES, getTemplate } from "@/lib/programTemplates";
 import { switchProgram } from "@/db/programSwitch";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
 import { SyncStatusRow } from "@/components/SyncStatusRow";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { Sheet } from "@/components/Sheet";
+import { EmailCodeForm } from "@/components/account/EmailCodeForm";
+import { unsyncedCount } from "@/db/account";
+import { importIntoStore } from "@/db/importStore";
+import { parseExport, type DetectedExport } from "@/lib/importers/detect";
+import {
+  authConfig,
+  authErrorMessage,
+  deleteAccount,
+  signInWithPasskey,
+  signOut,
+  updateProfile,
+} from "@/lib/auth";
 
 export default function SettingsPage() {
-  const { user, users, switchUser } = useUser();
+  const { user, session, adopt, refresh, patchUser, leave } = useUser();
+  const [signingIn, setSigningIn] = useState(false);
+  const errorRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const [pendingImport, setPendingImport] = useState<DetectedExport | null>(null);
+  const [emailOffered, setEmailOffered] = useState(false);
+  const [editingEmail, setEditingEmail] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<{ kind: "sign-out"; unsynced: number } | { kind: "delete" } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = useState<
@@ -40,7 +62,99 @@ export default function SettingsPage() {
     [user?.id],
   );
 
+  useEffect(() => {
+    authConfig().then((c) => setEmailOffered(c.email), () => {});
+  }, []);
+
   if (!user) return null;
+
+  // `next dev`, or a self-host without accounts: everything lives here.
+  const deviceOnly = user.id.startsWith("local_");
+  // Account and cloud actions need the server to know who this is.
+  const canReachAccount = !deviceOnly && session !== "signed-out";
+
+  /** Errors render at the bottom of the page, so bring them into view. */
+  const showError = (message: string) => {
+    setNotice(null);
+    setError(message);
+    requestAnimationFrame(() => errorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+  };
+
+  const fail = (prefix: string) => (e: unknown) =>
+    showError(`${prefix}: ${e instanceof Error ? e.message : String(e)}`);
+
+  const signBackIn = async () => {
+    if (signingIn) return;
+    setSigningIn(true);
+    setError(null);
+    try {
+      const account = await signInWithPasskey();
+      // One account per device: someone else's passkey mustn't quietly
+      // replace what's on this one.
+      if (account.id !== user.id) {
+        showError("That passkey is for a different account. Sign out first to switch accounts.");
+        return;
+      }
+      await adopt(account);
+    } catch (e) {
+      const message = authErrorMessage(e, "Couldn't sign in — try again.");
+      if (message) showError(message);
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  /** A skin is this device's choice first; the account catches up when it
+   * can, so the next new phone starts in it too. */
+  const setTheme = async (theme: "dark" | "light") => {
+    await patchUser({ theme });
+    if (canReachAccount) void updateProfile({ profile: { theme } }).then(refresh, () => {});
+  };
+
+  const confirmLeave = async () => {
+    const action = pendingLeave;
+    setPendingLeave(null);
+    if (!action) return;
+    setError(null);
+    setNotice(action.kind === "delete" ? "Deleting your account…" : "Signing out…");
+    try {
+      if (action.kind === "delete") await deleteAccount();
+      else if (!deviceOnly) await signOut().catch(() => {}); // offline: the device is cleared regardless
+      await leave();
+    } catch (e) {
+      fail(action.kind === "delete" ? "Couldn't delete the account" : "Couldn't sign out")(e);
+    }
+  };
+
+  const pickImport = async (f: File) => {
+    setError(null);
+    setNotice(null);
+    const detected = parseExport(await f.text());
+    if (importRef.current) importRef.current.value = "";
+    if (!detected) {
+      setError(
+        "This file doesn't look like a StrongLifts or Strong export. Use the CSV straight from the app's export screen.",
+      );
+      return;
+    }
+    setPendingImport(detected);
+  };
+
+  const runImport = async (detected: DetectedExport) => {
+    setPendingImport(null);
+    setNotice("Importing…");
+    try {
+      const s = await importIntoStore(user.id, detected.result);
+      scheduleBackup(user.id);
+      setNotice(
+        `Imported ${s.workoutsAdded.toLocaleString()} workouts${
+          s.workoutsSkipped ? ` (${s.workoutsSkipped.toLocaleString()} already here, skipped)` : ""
+        }.`,
+      );
+    } catch (e) {
+      fail("Import failed")(e);
+    }
+  };
 
   const downloadBackup = async () => {
     const json = await exportBackup(user.id);
@@ -48,7 +162,7 @@ export default function SettingsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `liftlog-backup-${user.name.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `rampset-backup-${fileSlug(user.name)}-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
     setNotice("Backup downloaded. Keep it somewhere safe — it restores everything.");
@@ -59,11 +173,12 @@ export default function SettingsPage() {
     setNotice(null);
     try {
       const s = await restoreBackup(user.id, await file.text());
+      scheduleBackup(user.id);
       setNotice(
         `Restored ${s.workouts.toLocaleString()} workouts, ${s.sets.toLocaleString()} sets, ${s.exercises} exercises.`,
       );
     } catch (e) {
-      setError(`Restore failed: ${e instanceof Error ? e.message : String(e)}`);
+      fail("Restore failed")(e);
     } finally {
       if (restoreRef.current) restoreRef.current.value = "";
     }
@@ -102,7 +217,7 @@ export default function SettingsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `liftlog-${user.name.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `rampset-${fileSlug(user.name)}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -113,31 +228,67 @@ export default function SettingsPage() {
 
       <h2 className="eyebrow mb-2 px-4">Account</h2>
       <div className="mb-5 glass">
-        {users.map((u) => (
-          <button
-            key={u.id}
-            onClick={() => switchUser(u.id)}
-            className="flex w-full items-center gap-3 border-b border-line px-4 py-3.5 text-left last:border-b-0"
+        <div className="flex items-center gap-3 border-b border-line px-4 py-3.5">
+          <span
+            className="disp flex h-8 w-8 flex-none items-center justify-center rounded-full text-[12px] text-white"
+            style={{ background: user.accent === "green" ? "var(--plate-10)" : "var(--plate-20)" }}
+            aria-hidden
           >
-            <span
-              className="disp flex h-8 w-8 flex-none items-center justify-center rounded-full text-[12px] text-white"
-              style={{
-                background: u.accent === "green" ? "var(--plate-10)" : "var(--plate-20)",
-              }}
-            >
-              {u.name[0]}
+            {user.name[0]?.toUpperCase()}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[15px] font-medium">{user.name}</span>
+            <span className="block truncate text-[12.5px] text-ink-faint">
+              {deviceOnly
+                ? "On this device only — no sync"
+                : session === "signed-out"
+                  ? "Signed out — sync and backup are paused"
+                  : "Signed in with a passkey"}
             </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-[15px] font-medium">{u.name}</span>
-              <span className="block truncate text-[12.5px] text-ink-faint">{u.email}</span>
-            </span>
-            {u.id === user.id && (
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" className="flex-none text-accent" role="img" aria-label="active">
-                <path d="M5 12.5l4.5 4.5L19 7.5" />
-              </svg>
-            )}
+          </span>
+        </div>
+
+        {!deviceOnly && session === "signed-out" && (
+          <button
+            onClick={() => void signBackIn()}
+            disabled={signingIn}
+            className="flex min-h-[44px] w-full items-center border-b border-line px-4 py-3.5 text-left text-[15px] font-medium text-accent disabled:opacity-60"
+          >
+            {signingIn ? "Signing in…" : "Sign in with passkey"}
           </button>
-        ))}
+        )}
+
+        {emailOffered && canReachAccount && (
+          <button
+            onClick={() => setEditingEmail(true)}
+            className="flex w-full items-center justify-between gap-3 border-b border-line px-4 py-3.5 text-left"
+          >
+            <span className="min-w-0">
+              <span className="block text-[15px] font-medium">
+                {user.email ? "Recovery email" : "Add recovery email"}
+              </span>
+              <span className="block truncate text-[12.5px] text-ink-faint">
+                {user.email || "Gets you back in if you lose every device"}
+              </span>
+            </span>
+            <Chevron />
+          </button>
+        )}
+
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <span className="text-[15px] font-medium">Appearance</span>
+          <div className="w-40">
+            <SegmentedControl
+              label="Appearance"
+              options={[
+                { value: "dark", label: "Dark" },
+                { value: "light", label: "Light" },
+              ]}
+              value={user.theme ?? "dark"}
+              onChange={(t) => void setTheme(t)}
+            />
+          </div>
+        </div>
       </div>
 
       <h2 className="eyebrow mb-2 px-4">Workout</h2>
@@ -192,7 +343,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <h2 className="eyebrow mb-2 px-4">Data</h2>
+      <h2 className="eyebrow mb-2 px-4">Your data</h2>
       <div className="glass">
         <div className="flex items-center justify-between border-b border-line px-4 py-3.5">
           <div>
@@ -218,15 +369,16 @@ export default function SettingsPage() {
 
         <SyncStatusRow />
 
+        {canReachAccount && (
+          <>
         <button
           onClick={async () => {
             setError(null);
             setNotice("Backing up to cloud…");
-            const r = await backupToCloud(user.id, user.email);
-            if (r.ok) setNotice("Backed up to cloud (R2). A snapshot also runs after every workout.");
+            const r = await backupToCloud(user.id);
+            if (r.ok) setNotice("Backed up. A snapshot also runs after every workout.");
             else {
-              setNotice(null);
-              setError(`Cloud backup failed: ${r.error}`);
+              showError(`Cloud backup failed: ${r.error}`);
             }
           }}
           className="flex w-full items-center justify-between border-b border-line px-4 py-3.5 text-left"
@@ -234,7 +386,7 @@ export default function SettingsPage() {
           <div>
             <div className="text-[15px] font-medium">Back up to cloud</div>
             <div className="text-[12.5px] text-ink-faint">
-              Snapshot to R2 — automatic after every finished workout
+              Snapshot of everything — also runs after every workout
             </div>
           </div>
           <span className="mono text-accent">↑</span>
@@ -247,20 +399,22 @@ export default function SettingsPage() {
           <div>
             <div className="text-[15px] font-medium">Restore from cloud</div>
             <div className="text-[12.5px] text-ink-faint">
-              Pull the latest R2 snapshot onto this device
+              Replace this device&apos;s history with the latest snapshot
             </div>
           </div>
           <span className="mono text-accent">↓</span>
         </button>
+          </>
+        )}
 
         <button
           onClick={downloadBackup}
           className="flex w-full items-center justify-between border-b border-line px-4 py-3.5 text-left"
         >
           <div>
-            <div className="text-[15px] font-medium">Back up (JSON)</div>
+            <div className="text-[15px] font-medium">Download backup</div>
             <div className="text-[12.5px] text-ink-faint">
-              Complete snapshot — programs, weights, history. Restorable.
+              Everything — programs, weights, history — as a file you keep
             </div>
           </div>
           <span className="mono text-accent">↓</span>
@@ -268,12 +422,12 @@ export default function SettingsPage() {
 
         <button
           onClick={() => restoreRef.current?.click()}
-          className="flex w-full items-center justify-between px-4 py-3.5 text-left"
+          className="flex w-full items-center justify-between border-b border-line px-4 py-3.5 text-left"
         >
           <div>
-            <div className="text-[15px] font-medium">Restore from backup</div>
+            <div className="text-[15px] font-medium">Restore from backup file</div>
             <div className="text-[12.5px] text-ink-faint">
-              Replaces this device&apos;s data with a backup file
+              Replaces this device&apos;s history with a downloaded backup
             </div>
           </div>
           <span className="mono text-accent">↑</span>
@@ -282,24 +436,73 @@ export default function SettingsPage() {
           ref={restoreRef}
           type="file"
           accept=".json,application/json"
+          aria-label="Restore from backup file"
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
             if (f) setPendingRestore({ kind: "file", file: f });
           }}
         />
+
+        <button
+          onClick={() => importRef.current?.click()}
+          className="flex w-full items-center justify-between px-4 py-3.5 text-left"
+        >
+          <div>
+            <div className="text-[15px] font-medium">Import from another app</div>
+            <div className="text-[12.5px] text-ink-faint">
+              StrongLifts or Strong CSV export — added to your history
+            </div>
+          </div>
+          <span className="mono text-accent">↑</span>
+        </button>
+        <input
+          ref={importRef}
+          type="file"
+          accept=".csv,text/csv"
+          aria-label="Import from another app"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void pickImport(f);
+          }}
+        />
       </div>
 
-      {notice && (
-        <div className="mt-3 glass p-4 ring-1 ring-plate-10/40 text-[13.5px] leading-relaxed">
-          {notice}
-        </div>
-      )}
+      <div role="status" aria-live="polite">
+        {notice && (
+          <div className="mt-3 glass p-4 ring-1 ring-plate-10/40 text-[13.5px] leading-relaxed">
+            {notice}
+          </div>
+        )}
+      </div>
       {error && (
-        <div className="mt-3 glass p-4 ring-1 ring-plate-25/40 text-[13.5px] leading-relaxed">
+        <div ref={errorRef} role="alert" className="mt-3 glass p-4 ring-1 ring-plate-25/40 text-[13.5px] leading-relaxed">
           {error}
         </div>
       )}
+
+      {/* Leaving goes last, on its own, like iOS. */}
+      <div className="mt-5 glass">
+        <button
+          onClick={async () =>
+            setPendingLeave({ kind: "sign-out", unsynced: deviceOnly ? 0 : await unsyncedCount(user.id) })
+          }
+          className={`flex min-h-[44px] w-full items-center px-4 py-3.5 text-left text-[15px] font-medium ${
+            deviceOnly ? "text-danger" : "text-accent"
+          } ${canReachAccount ? "border-b border-line" : ""}`}
+        >
+          {deviceOnly ? "Erase this device" : "Sign out"}
+        </button>
+        {canReachAccount && (
+          <button
+            onClick={() => setPendingLeave({ kind: "delete" })}
+            className="flex min-h-[44px] w-full items-center px-4 py-3.5 text-left text-[15px] font-medium text-danger"
+          >
+            Delete account
+          </button>
+        )}
+      </div>
 
       {pendingSwitch && (
         <ConfirmSheet
@@ -315,12 +518,12 @@ export default function SettingsPage() {
             setError(null);
             void switchProgram(user.id, id)
               .then(() => {
-                scheduleBackup(user.id, user.email);
+                scheduleBackup(user.id);
+                // A new device builds this program before restoring.
+                void updateProfile({ profile: { templateId: id } }).catch(() => {});
                 setNotice(`Switched to ${getTemplate(id)?.name ?? "the new program"}.`);
               })
-              .catch((e) =>
-                setError(`Switch failed: ${e instanceof Error ? e.message : String(e)}`),
-              )
+              .catch(fail("Switch failed"))
               .finally(() => setSwitching(false));
           }}
         />
@@ -331,8 +534,8 @@ export default function SettingsPage() {
           title="Restore and replace?"
           body={
             pendingRestore.kind === "cloud"
-              ? "This replaces all data on this device for the active user with the latest cloud snapshot."
-              : "This replaces all data on this device for the active user with the backup file's contents."
+              ? "This replaces everything on this device with the latest cloud snapshot."
+              : "This replaces everything on this device with this backup file."
           }
           confirmLabel="Replace this device's data"
           onCancel={() => {
@@ -344,14 +547,13 @@ export default function SettingsPage() {
             setPendingRestore(null);
             if (action.kind === "cloud") {
               setNotice("Restoring from cloud…");
-              void restoreFromCloud(user.id, user.email).then((r) => {
+              void restoreFromCloud(user.id).then((r) => {
                 if (r.ok && r.summary) {
                   setNotice(
                     `Restored ${r.summary.workouts.toLocaleString()} workouts, ${r.summary.sets.toLocaleString()} sets from cloud.`,
                   );
                 } else {
-                  setNotice(null);
-                  setError(`Cloud restore failed: ${r.error}`);
+                  showError(`Cloud restore failed: ${r.error}`);
                 }
               });
             } else {
@@ -361,11 +563,60 @@ export default function SettingsPage() {
         />
       )}
 
+      {pendingImport && (
+        <ConfirmSheet
+          title="Import history?"
+          body={importSummary(pendingImport)}
+          confirmLabel="Import"
+          tone="positive"
+          onCancel={() => setPendingImport(null)}
+          onConfirm={() => void runImport(pendingImport)}
+        />
+      )}
+
+      {pendingLeave && (
+        <ConfirmSheet
+          title={pendingLeave.kind === "delete" ? "Delete your account?" : deviceOnly ? "Erase this device?" : "Sign out?"}
+          body={
+            pendingLeave.kind === "delete"
+              ? "This permanently deletes your account, your synced workouts and your cloud backups, and erases this device. Download a backup first if you want to keep your history."
+              : deviceOnly
+                ? "Your history lives only on this device, so this deletes it. Download a backup first if you want to keep it."
+                : `${
+                  pendingLeave.unsynced
+                    ? `${pendingLeave.unsynced} ${pendingLeave.unsynced === 1 ? "workout hasn't" : "workouts haven't"} synced yet and will be lost. `
+                    : ""
+                }This clears Rampset from this device. Sign back in to get your history back.`
+          }
+          confirmLabel={pendingLeave.kind === "delete" ? "Delete account" : deviceOnly ? "Erase this device" : "Sign out"}
+          onCancel={() => setPendingLeave(null)}
+          onConfirm={() => void confirmLeave()}
+        />
+      )}
+
+      {editingEmail && (
+        <Sheet label="Recovery email" onClose={() => setEditingEmail(false)}>
+          <h2 className="disp mb-1 text-[19px]">{user.email ? "Change recovery email" : "Recovery email"}</h2>
+          <p className="mb-4 text-[15px] leading-snug text-ink-dim">
+            {user.email ? `Currently ${user.email}. ` : ""}Your passkey is your login. If you lose
+            every device it&apos;s on, a code sent here gets you back in.
+          </p>
+          <EmailCodeForm
+            purpose="add-email"
+            onDone={(account) => {
+              setEditingEmail(false);
+              void refresh(account);
+              setNotice(`Recovery email set to ${account.email}.`);
+            }}
+          />
+        </Sheet>
+      )}
+
       <h2 className="eyebrow mb-2 mt-5 px-4">About</h2>
       <div className="glass px-4 py-3.5 text-[12.5px] leading-relaxed text-ink-faint">
-        Rampset runs entirely on this device — every workout is stored locally and
-        works offline. Deployment target: Cloudflare Workers behind Cloudflare
-        Access ({users.map((u) => u.email).join(", ")}).
+        Rampset runs on this device — every workout is stored locally and works
+        offline. Your account keeps your devices in sync and backs your history
+        up to the cloud.
       </div>
     </div>
   );
@@ -415,6 +666,20 @@ function RestTimerSetting({ userId }: { userId: string }) {
       />
     </label>
   );
+}
+
+function importSummary({ source, result }: DetectedExport): string {
+  const dates = result.workouts.map((w) => w.date).sort();
+  const fmt = (d: string) =>
+    new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  const n = result.workouts.length;
+  return `Found ${n.toLocaleString()} ${n === 1 ? "workout" : "workouts"} from ${source}, ${fmt(dates[0])} – ${fmt(
+    dates[dates.length - 1],
+  )}. They're added to your history; nothing is replaced, and workouts already here are skipped.`;
+}
+
+function fileSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "lifter";
 }
 
 function csv(v: string): string {

@@ -11,17 +11,21 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "preview": "opennextjs-cloudflare build && wrangler dev --port 8787 --local-upstream localhost:8787",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "lint": "eslint .",
     "typecheck": "node node_modules/typescript-7/bin/tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.mts",
+    "test:e2e": "opennextjs-cloudflare build && playwright test"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.12",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
     "dexie": "^4.4.6",
     "dexie-react-hooks": "^4.4.0",
     "durable-sync": "^0.3.0",
@@ -36,6 +40,8 @@
     }
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.4",
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

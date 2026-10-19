@@ -25,7 +25,7 @@ PWA you run yourself.
 
 It's **yours**: reshape any program, rewrite the progression engines or add
 your own, keep every rep on your device, and export it all whenever. No
-subscription, no account to lose, no roadmap that abandons you.
+subscription, no password to lose, no roadmap that abandons you.
 
 **Website & guide → https://isaacrowntree.github.io/rampset**
 
@@ -58,16 +58,39 @@ subscription, no account to lose, no roadmap that abandons you.
 git clone https://github.com/isaacrowntree/rampset
 cd rampset
 npm install
-cp .env.example .env.local     # then edit: your lifters, units, starting weights
-npm run dev                    # → http://localhost:3000
-npm test                       # vitest — the engines, store, sync, components
+npm run dev                    # → http://localhost:3000, device-only (no accounts)
+npm run preview                # → http://localhost:8787, the real worker: accounts, sync
 ```
+
+`npm run dev` is plain Next.js, which can't run Durable Objects — so the app
+offers **Start on this device**, a local-only account with no sync. Use
+`npm run preview` to work on sign-in and sync: it builds the worker and serves
+it under `wrangler dev`, with the Durable Objects, R2, rate limits and email
+running locally (sent emails are written under `.wrangler/tmp/email/`).
+
+## Tests
+
+```bash
+npm test                       # unit + component (Vitest, jsdom)
+npm run test:integration       # the Auth Durable Object on real workerd SQLite
+npm run test:e2e               # the whole app in Chromium against the built worker
+```
+
+The end-to-end suite (`e2e/`) is the one to trust. It drives real journeys —
+signing up with a passkey (Chrome's virtual authenticator), training 5×5,
+Madcow and a custom routine, correcting history, importing from StrongLifts,
+recovering a lost phone by email, settings, deleting an account — against the
+built worker with nothing mocked. The core sync journey runs **online,
+offline, on a flappy connection and on a slow one**, and checks a workout
+reaches the second phone exactly once.
 
 ## Self-host on Cloudflare
 
-Rampset deploys to Cloudflare Workers via the OpenNext adapter, and uses
-**Cloudflare Access** (a free zero-trust login) as its auth — so only the emails
-you allow can get in, with no passwords for you to manage.
+Rampset deploys to Cloudflare Workers via the OpenNext adapter. Anyone can
+create an account on your instance: a **passkey** (Face ID, a fingerprint) is
+the login, and an optional **recovery email** gets them back in if they lose
+every device. Accounts, passkeys and sessions live in a Durable Object — there
+is nothing to configure in the dashboard.
 
 ```bash
 npm run deploy                 # opennextjs-cloudflare build && deploy
@@ -77,34 +100,43 @@ Then, once deployed:
 
 1. Set your **Cloudflare account id** in `wrangler.jsonc` (replace the
    placeholder) or export `CLOUDFLARE_ACCOUNT_ID`.
-2. In the Cloudflare dashboard, add an **Access** application in front of your
-   Worker's URL and allow your lifters' emails (email one-time-code or Google).
-   That's your login — each profile is keyed to the authenticated Access email.
-3. Create the **R2 bucket** the `BACKUPS` binding points at (for cloud backups).
+2. Create the **R2 bucket** the `BACKUPS` binding points at (for cloud backups).
+3. **Recovery email** (optional): set `EMAIL_FROM` in `wrangler.jsonc` to an
+   address on a domain onboarded to Cloudflare Email Sending
+   (`npx wrangler email sending enable <domain>`). Without it, the app simply
+   doesn't offer recovery by email.
+4. **Bot protection** (optional): create a Turnstile widget and set the
+   `TURNSTILE_SITE_KEY` var and `TURNSTILE_SECRET_KEY` secret. Sign-up and
+   recovery then ask for a Turnstile check.
 
-**What it costs:** Workers and Cloudflare Access are free for a household
-(Access is free up to 50 users), and there's no KV/cache to configure. The one
-paid gate is **R2** — the app's backups sit comfortably inside R2's 10 GB free
-tier, but Cloudflare requires a **payment method on file to enable R2** (you
-won't be charged under the free limits). Prefer no card at all? Remove the
-`BACKUPS` R2 binding from `wrangler.jsonc` — the app is fully offline-first on
-local IndexedDB and **Settings → Export** gives you a complete CSV backup
-whenever you want.
+Sign-in and email routes are rate limited per client IP, and sync/backup per
+account (the `ratelimits` bindings). A push is capped at 100 ops and 1 MB, a
+backup at 10 MB.
 
-## Configuration — no personal data in the repo
+**What it costs:** Workers and Durable Objects are free at household scale, and
+there's no KV/cache to configure. The one paid gate is **R2** — the app's
+backups sit comfortably inside R2's 10 GB free tier, but Cloudflare requires a
+**payment method on file to enable R2** (you won't be charged under the free
+limits). Prefer no card at all? Remove the `BACKUPS` R2 binding from
+`wrangler.jsonc` — sync still works, and **Settings → Download backup** gives
+you a complete file whenever you want.
 
-Lifters are defined entirely by an env var (`.env.local`, gitignored). See
-[`.env.example`](.env.example) for the shape: `id`, `name`, `email`, `accent`
-(`blue` | `green`), `unit` (`kg` | `lb`), program `template`, and optional
-starting working weights. The committed code carries only generic program
-templates. Switch lifters with the avatar in the header (or Settings → Account).
+## Your data
+
+Everything is on the phone first. **Settings → Your data** downloads a full
+backup file, restores one (from any account — this is how you move to a new
+one), exports a CSV, and **imports your history from StrongLifts or Strong**.
+Programs are templates in the repo (`src/lib/programTemplates.ts`); choose
+StrongLifts 5×5, Madcow, or a **custom routine** you build in the Program tab.
 
 ## Architecture
 
 - **Next.js 16 App Router**, all screens client components.
 - **IndexedDB (Dexie)** is the on-device source of truth — fully functional
-  offline. Optional cross-device **sync** (a per-user SQLite Durable Object that
-  orders each user's ops) and **backups** (R2 snapshots) via Cloudflare Workers.
+  offline. Cross-device **sync** (a per-account SQLite Durable Object that
+  orders each account's ops, via [durable-sync](https://github.com/isaacrowntree/durable-sync)),
+  **accounts** (passkeys + email recovery in an Auth Durable Object), and
+  **backups** (R2 snapshots) via Cloudflare Workers.
 - **Engines** are pure, unit-tested functions in `src/lib/`: linear progression
   + deload, Madcow ramps, routine prefill, plate-per-side math, Epley e1RM,
   PR detection. Editing them is the point — start there.

@@ -1,65 +1,40 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { setAccessIdentity, mayWriteAs } from "./identityGate";
+import { setSessionAccount, mayWriteAs } from "./identityGate";
 
 beforeEach(() => {
   localStorage.clear();
-  setAccessIdentity(null);
+  setSessionAccount(null);
 });
 
 describe("mayWriteAs", () => {
-  it("allows the avatar whose email matches the Access session", () => {
-    setAccessIdentity("isaac@example.com");
-    expect(mayWriteAs("isaac@example.com")).toBe(true);
+  it("allows the account the server confirmed", () => {
+    setSessionAccount("u_me");
+    expect(mayWriteAs("u_me")).toBe(true);
   });
 
-  it("is case-insensitive about the match", () => {
-    setAccessIdentity("Isaac@Example.com");
-    expect(mayWriteAs("isaac@example.com")).toBe(true);
+  // The routes file data under the session cookie's account. If that is no
+  // longer this device's account, a push would land in someone else's log.
+  it("refuses to write as any other account", () => {
+    setSessionAccount("u_me");
+    expect(mayWriteAs("u_someone")).toBe(false);
   });
 
-  // /api/sync and /api/backup are BOTH routed by the server-side Access email,
-  // while the rows they carry belong to whichever avatar is selected on this
-  // device. Finish a workout as someone else and their data is written into
-  // YOUR journal and YOUR latest.json. The switcher is one tap away.
-  it("refuses to write another avatar's data under this Access session", () => {
-    setAccessIdentity("isaac@example.com");
-    expect(mayWriteAs("someone-else@example.com")).toBe(false);
+  it("refuses everything once signed out", () => {
+    setSessionAccount("u_me");
+    setSessionAccount(null);
+    expect(mayWriteAs("u_me")).toBe(false);
   });
 
-  // /api/me has a 2s timeout and falls back to a saved selection, so an
-  // unknown identity is routine (cold launch, flaky network). Blocking sync
-  // then would strand a device that is almost certainly fine — and the server
-  // is the real authority either way.
-  it("allows writes when the Access identity could not be resolved", () => {
-    setAccessIdentity(null);
-    expect(mayWriteAs("isaac@example.com")).toBe(true);
-  });
-});
-
-/** /api/me has a 2s timeout and a cold mobile network blows it routinely, so
- * "unresolved" is a normal state — but the identity itself changes almost
- * never. Falling back to the last one we DID resolve is strictly better than
- * opening the gate on a flaky request. */
-describe("remembering the resolved identity", () => {
-  it("falls back to the last resolved identity when /api/me fails", () => {
-    setAccessIdentity("isaac@example.com"); // a launch where it worked
-    setAccessIdentity(null); // next launch: /api/me timed out
-
-    expect(mayWriteAs("isaac@example.com")).toBe(true);
-    expect(mayWriteAs("someone-else@example.com")).toBe(false); // still guarded
+  // A session check that fails (offline, timeout) is not evidence of a
+  // different account — keep writing as the one we last confirmed.
+  it("keeps the last confirmed account when the check can't tell", () => {
+    setSessionAccount("u_me");
+    setSessionAccount(undefined);
+    expect(mayWriteAs("u_me")).toBe(true);
   });
 
-  it("still allows writes on a device that has never resolved one", () => {
-    setAccessIdentity(null);
-    expect(mayWriteAs("anyone@example.com")).toBe(true);
-  });
-
-  it("a newly resolved identity replaces the remembered one", () => {
-    setAccessIdentity("old@example.com");
-    setAccessIdentity("new@example.com");
-    setAccessIdentity(null);
-
-    expect(mayWriteAs("new@example.com")).toBe(true);
-    expect(mayWriteAs("old@example.com")).toBe(false);
+  it("remembers the confirmed account across reloads", async () => {
+    setSessionAccount("u_me");
+    expect(localStorage.getItem("liftlog.sessionAccount")).toBe("u_me");
   });
 });

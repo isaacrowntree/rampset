@@ -6,29 +6,17 @@
 import { exportBackup, restoreBackup, type RestoreSummary } from "@/db/backup";
 import { mayWriteAs } from "@/lib/identityGate";
 
-function devHeaders(email: string): HeadersInit {
-  // Behind Cloudflare Access the identity header is injected by the edge;
-  // in local dev we supply one so the route works.
-  return process.env.NODE_ENV === "development"
-    ? { "x-liftlog-dev-user": email }
-    : {};
-}
-
-export async function backupToCloud(
-  userId: string,
-  email: string,
-): Promise<{ ok: boolean; error?: string }> {
-  // The route files this under the Access identity, not this avatar — so
-  // backing up while switched to someone else would overwrite THEIR snapshot
-  // with our database, or ours with theirs.
-  if (!mayWriteAs(email)) {
-    return { ok: false, error: "Not signed in as this user — skipping backup" };
+export async function backupToCloud(userId: string): Promise<{ ok: boolean; error?: string }> {
+  // The route files this under the session's account, not this device's —
+  // if they've parted, uploading would overwrite someone else's snapshot.
+  if (!mayWriteAs(userId)) {
+    return { ok: false, error: "Not signed in — sign in to back up" };
   }
   try {
     const json = await exportBackup(userId);
     const res = await fetch("/api/backup", {
       method: "POST",
-      headers: { "content-type": "application/json", ...devHeaders(email) },
+      headers: { "content-type": "application/json" },
       body: json,
     });
     if (!res.ok) {
@@ -42,12 +30,9 @@ export async function backupToCloud(
 }
 
 /** Raw latest snapshot, or null when offline / none exists. */
-export async function getLatestCloudBackup(email: string): Promise<string | null> {
+export async function getLatestCloudBackup(): Promise<string | null> {
   try {
-    const res = await fetch("/api/backup", {
-      headers: devHeaders(email),
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await fetch("/api/backup", { signal: AbortSignal.timeout(8000) });
     return res.ok ? res.text() : null;
   } catch {
     return null;
@@ -56,10 +41,9 @@ export async function getLatestCloudBackup(email: string): Promise<string | null
 
 export async function restoreFromCloud(
   userId: string,
-  email: string,
 ): Promise<{ ok: boolean; summary?: RestoreSummary; error?: string }> {
   try {
-    const res = await fetch("/api/backup", { headers: devHeaders(email) });
+    const res = await fetch("/api/backup");
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       return { ok: false, error: body?.error ?? `HTTP ${res.status}` };

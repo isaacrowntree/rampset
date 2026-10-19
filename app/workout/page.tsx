@@ -25,6 +25,7 @@ import { activeWorkoutKey } from "@/db/activeWorkout";
 import { completeWorkout } from "@/lib/finishFlow";
 import { sessionTonnageKg, workSetCount } from "@/lib/workoutStats";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
+import { enqueueEditedWorkout } from "@/db/sync";
 
 export default function WorkoutPage() {
   return (
@@ -154,7 +155,7 @@ function WorkoutScreen() {
       // Local commit + congrats + navigation happen instantly; sync/backup are
       // fired detached, so a slow connection can't freeze the Finish flow.
       await completeWorkout(
-        { userId: user.id, email: user.email, workoutId: session.workout.id, workSets, tonnageKg },
+        { userId: user.id, workoutId: session.workout.id, workSets, tonnageKg },
         {
           navigate: (path) => {
             navigatingAway.current = true;
@@ -178,8 +179,10 @@ function WorkoutScreen() {
     // No timer.stop(): edit mode never starts one, and the rest running is
     // the in-progress workout's, not this one's.
     try {
-      await saveFinishedWorkout(session.workout.id);
-      scheduleBackup(user.id, user.email);
+      const recomputed = await saveFinishedWorkout(session.workout.id);
+      // The correction goes to every phone, not just the next new one.
+      await enqueueEditedWorkout(user.id, session.workout.id, recomputed).catch(() => {});
+      scheduleBackup(user.id);
       navigatingAway.current = true;
       leaveEdit();
     } finally {

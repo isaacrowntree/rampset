@@ -88,17 +88,22 @@ interface PersistedRest {
 }
 
 export function useRestTimer() {
-  const [running, setRunning] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const [suggestion, setSuggestion] = useState(90);
-  const [overdue, setOverdue] = useState(false);
-  const [style, setStyle] = useState<TimerStyle>("up");
-  const startTs = useRef<number>(0);
-  const rung = useRef(false);
+  // A rest started before a refresh/navigation is still the current rest —
+  // it starts out restored, with the right elapsed time. (The workout screen
+  // renders on the client only, so localStorage is there to read.)
+  const [saved] = useState(readSavedRest);
+  const [running, setRunning] = useState(saved !== null);
+  const [elapsed, setElapsed] = useState(saved?.secs ?? 0);
+  const [suggestion, setSuggestion] = useState(saved?.target ?? 90);
+  const [overdue, setOverdue] = useState(saved ? saved.secs >= saved.target : false);
+  const [style, setStyle] = useState<TimerStyle>(saved?.style ?? "up");
+  const startTs = useRef<number>(saved?.startTs ?? 0);
+  // Already-rung rests don't re-ring.
+  const rung = useRef(saved?.rung ?? false);
   const interval = useRef<ReturnType<typeof setInterval> | null>(null);
   const bell = useRef<ReturnType<typeof makeBell> | null>(null);
-  const suggestionRef = useRef(90);
-  const styleRef = useRef<TimerStyle>("up");
+  const suggestionRef = useRef(saved?.target ?? 90);
+  const styleRef = useRef<TimerStyle>(saved?.style ?? "up");
   const autoDismiss = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stopRef = useRef<() => void>(() => {});
@@ -207,50 +212,13 @@ export function useRestTimer() {
     },
     [tick],
   );
-  stopRef.current = stop;
-
-  // A rest started before a refresh/navigation is still the current rest —
-  // resume it with correct elapsed time. Already-rung rests don't re-ring.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PERSIST_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as PersistedRest;
-      const secs = Math.floor((Date.now() - saved.startTs) / 1000);
-      // A rest older than 30 minutes is a stale artifact, not a rest.
-      if (secs < 0 || secs > 30 * 60) {
-        localStorage.removeItem(PERSIST_KEY);
-        return;
-      }
-      const savedStyle: TimerStyle = saved.style === "down" ? "down" : "up";
-      // An expired countdown is over — don't resurrect it.
-      if (savedStyle === "down" && secs >= saved.suggestion) {
-        localStorage.removeItem(PERSIST_KEY);
-        return;
-      }
-      // A resumed stopwatch may have sailed past markers while away — fast
-      // forward the ladder silently (never re-ring stale milestones).
-      let target = saved.suggestion;
-      if (savedStyle === "up") {
-        while (secs >= target) {
-          const next = nextLadderStep(target);
-          if (next === undefined) break;
-          target = next;
-        }
-      }
-      startTs.current = saved.startTs;
-      suggestionRef.current = target;
-      styleRef.current = savedStyle;
-      rung.current = saved.rung || secs >= target; // never re-ring stale
-      setSuggestion(target);
-      setStyle(savedStyle);
-      setElapsed(secs);
-      setOverdue(secs >= target);
-      setRunning(true);
-      interval.current = setInterval(tick, 1000);
-    } catch {
-      // corrupted — ignore
-    }
+    stopRef.current = stop;
+  }, [stop]);
+
+  // A restored rest keeps ticking.
+  useEffect(() => {
+    if (saved) interval.current = setInterval(tick, 1000);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -355,4 +323,46 @@ function fmt(secs: number): string {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return s ? `${m}:${String(s).padStart(2, "0")}` : `${m}:00`;
+}
+
+/** The rest a refresh interrupted, fast-forwarded to now — or null when there
+ * is none worth resuming (stale, expired, corrupt), clearing it if so. */
+function readSavedRest(): {
+  startTs: number;
+  target: number;
+  style: TimerStyle;
+  secs: number;
+  rung: boolean;
+} | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(PERSIST_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as PersistedRest;
+    const secs = Math.floor((Date.now() - saved.startTs) / 1000);
+    // A rest older than 30 minutes is a stale artifact, not a rest.
+    if (secs < 0 || secs > 30 * 60) {
+      localStorage.removeItem(PERSIST_KEY);
+      return null;
+    }
+    const style: TimerStyle = saved.style === "down" ? "down" : "up";
+    // An expired countdown is over — don't resurrect it.
+    if (style === "down" && secs >= saved.suggestion) {
+      localStorage.removeItem(PERSIST_KEY);
+      return null;
+    }
+    // A resumed stopwatch may have sailed past markers while away — fast
+    // forward the ladder silently (never re-ring stale milestones).
+    let target = saved.suggestion;
+    if (style === "up") {
+      while (secs >= target) {
+        const next = nextLadderStep(target);
+        if (next === undefined) break;
+        target = next;
+      }
+    }
+    return { startTs: saved.startTs, target, style, secs, rung: saved.rung || secs >= target };
+  } catch {
+    return null; // corrupted — ignore
+  }
 }

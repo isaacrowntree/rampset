@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useUser } from "@/state/UserContext";
-import { AvatarSwitcher } from "./AvatarSwitcher";
 
 export function AppHeader({ title, sub }: { title?: string; sub?: string }) {
-  const { user, users, switchUser } = useUser();
+  const { user } = useUser();
+  const pathname = usePathname();
   const titleRef = useRef<HTMLHeadingElement>(null);
   // UIKit's collapsing large title: once it scrolls under the status bar, a
   // compact title fades in on a blurred bar. An observer, not a scroll
@@ -54,9 +56,16 @@ export function AppHeader({ title, sub }: { title?: string; sub?: string }) {
           )}
           {sub && <p className="mt-1.5 text-[15px] text-ink-faint">{sub}</p>}
         </div>
-        <div className="flex-none">
-          <AvatarSwitcher user={user} users={users} onSwitch={switchUser} />
-        </div>
+        {/* The device's one account; its controls live in Settings. */}
+        <Link
+          href="/settings"
+          aria-current={pathname === "/settings" ? "page" : undefined}
+          aria-label={`${user?.name ?? "Account"} — settings`}
+          className="disp flex h-11 w-11 flex-none items-center justify-center rounded-full text-[15px] text-white"
+          style={{ backgroundColor: user?.accent === "green" ? "var(--plate-10)" : "var(--plate-20)" }}
+        >
+          {user?.name[0]?.toUpperCase() ?? ""}
+        </Link>
       </header>
     </>
   );

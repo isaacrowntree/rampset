@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "./db";
-import { seedIfEmpty } from "./seed";
-import { setAccessIdentity } from "@/lib/identityGate";
+import { seedIfEmpty } from "@/test/seed";
+import { setSessionAccount } from "@/lib/identityGate";
 import { startWorkout, logSet, finishWorkout } from "./session";
 import {
   buildFinishedWorkoutOp,
+  buildEditedWorkoutOp,
   applyOp,
   deleteWorkoutOpId,
 } from "./sync";
@@ -17,7 +18,7 @@ beforeEach(async () => {
   await db.open();
   await seedIfEmpty();
   localStorage.clear();
-  setAccessIdentity(null); // unresolved identity — the permissive default
+  setSessionAccount(USER1); // signed in as the device's account
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -91,6 +92,72 @@ describe("applying a finished-workout op", () => {
     op!.payload.workout.userId = "user-2";
 
     expect(await applyOp(USER1, op!)).toBe(false);
+  });
+});
+
+/** An edit as another phone made it: the workout with its sets changed. */
+async function editOp(workoutId: string, reps: number, editedAt: number) {
+  const op = (await buildEditedWorkoutOp(workoutId, editedAt, false))!;
+  return {
+    ...op,
+    payload: { ...op.payload, sets: op.payload.sets.map((s) => ({ ...s, reps })) },
+  };
+}
+
+describe("editedWorkout op", () => {
+  it("replaces the workout's sets on a phone that already has it", async () => {
+    const workoutId = await finishRealWorkout();
+    expect(await applyOp(USER1, await editOp(workoutId, 3, 1000))).toBe(true);
+    const sets = await db.sets.where({ workoutId }).toArray();
+    expect(sets.map((s) => s.reps)).toEqual([3, 3, 3, 3, 3]);
+  });
+
+  // Two phones correct the same workout offline. Each receives the other's
+  // edit — and its own echoed back — in whatever order. Whatever the order,
+  // both must end on the later edit, or they disagree for good.
+  it("keeps the latest edit whatever order the edits arrive in", async () => {
+    const workoutId = await finishRealWorkout();
+    const older = await editOp(workoutId, 4, 1000);
+    const newer = await editOp(workoutId, 2, 2000);
+
+    await applyOp(USER1, newer);
+    expect(await applyOp(USER1, older)).toBe(false);
+    expect((await db.sets.where({ workoutId }).toArray()).map((s) => s.reps)).toEqual([2, 2, 2, 2, 2]);
+  });
+
+  it("never brings back a deleted workout", async () => {
+    const workoutId = await finishRealWorkout();
+    const edit = await editOp(workoutId, 3, 1000);
+    await applyOp(USER1, { opId: deleteWorkoutOpId(workoutId), kind: "deleteWorkout", payload: { workoutId } } as never);
+    expect(await applyOp(USER1, edit)).toBe(false);
+    expect(await db.workouts.get(workoutId)).toBeUndefined();
+  });
+
+  // Out of order: the edit can arrive before the workout it corrects (a new
+  // phone pulling while the original push is still in flight). The edit is
+  // the newer truth, so the late original must not overwrite it.
+  it("lands even before the original, which then changes nothing", async () => {
+    const workoutId = await finishRealWorkout();
+    const original = (await buildFinishedWorkoutOp(workoutId))!;
+    const edit = await editOp(workoutId, 3, 1000);
+
+    await db.delete();
+    await db.open();
+    await seedIfEmpty();
+    expect(await applyOp(USER1, edit)).toBe(true);
+    expect(await applyOp(USER1, original)).toBe(false);
+    expect((await db.sets.where({ workoutId }).toArray()).map((s) => s.reps)).toEqual([3, 3, 3, 3, 3]);
+  });
+
+  it("moves working weights only when the author's edit recomputed them", async () => {
+    const workoutId = await finishRealWorkout();
+    const pe = (await db.programExercises.where({ programDayId: "day-5x5-b-user-1" }).sortBy("position"))[0];
+    await db.programExercises.update(pe.id, { workingWeightKg: 99 }); // moved on since
+
+    const unweighted = await buildEditedWorkoutOp(workoutId, 1000, false);
+    expect(unweighted!.payload.weights).toEqual([]);
+    await applyOp(USER1, unweighted!);
+    expect((await db.programExercises.get(pe.id))?.workingWeightKg).toBe(99);
   });
 });
 

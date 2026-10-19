@@ -414,9 +414,9 @@ function ExerciseSheet({
   });
   // A burst of taps fires before React re-renders; each must compute from
   // the previous tap's result, not the stale render value — otherwise two
-  // quick taps only move one step ("sticks").
+  // quick taps only move one step ("sticks"). `apply` is the only writer,
+  // and it updates the ref as it goes.
   const draftRef = useRef(draft);
-  draftRef.current = draft;
 
   // Exercise cue (form reminder). Persists on blur, then rebuilds the plan so
   // the note shows under the exercise during the workout.

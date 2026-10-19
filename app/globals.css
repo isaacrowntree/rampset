@@ -28,6 +28,7 @@
   --accent-glow: rgba(10, 132, 255, 0.4);
   --accent-text: #409cff; /* 4.9:1 on #2C2C2E, where #0A84FF is 3.8 */
   --success-text: #30d158;
+  --danger-text: #ff453a; /* 5.3:1 on black */
 
   /* UIKit-shaped springs as linear() curves; each duration IS its settle
    * time — shorter clips the tail, longer stalls. */
@@ -91,6 +92,7 @@ body[data-accent="green"] {
   --accent-soft: rgba(0, 122, 255, 0.12);
   --accent-text: #0062cc; /* 5.6:1 on #F2F2F7 */
   --success-text: #1e7a34;
+  --danger-text: #d70015; /* 5.5:1 on #F2F2F7 — #FF3B30 is 3.3 */
 }
 :root[data-theme="light"] body[data-accent="green"] {
   --accent: #248a3d; /* fills: white label 4.4:1 at large/bold sizes */
@@ -182,6 +184,9 @@ svg {
 }
 .text-success {
   color: var(--success-text);
+}
+.text-danger {
+  color: var(--danger-text);
 }
 
 /* Display type — SF Pro Display at large sizes; numbers stay tabular. */

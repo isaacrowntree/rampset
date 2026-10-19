@@ -1,17 +1,12 @@
 "use client";
 
-/** One sync engine per user, memoized.
- *
- * durable-sync is single-tenant by construction: the in-flight guard and the
- * throttle live in the instance's closure. That's correct for it and wrong for
- * us — the avatar switcher means one device serves two users — so the mapping
- * from user to instance is our business.
+/** One sync engine per account, memoized.
  *
  * Memoizing is the whole point. A fresh instance per render or per remount
  * resets `lastRunAt`, defeating the throttle that exists because ONE
  * foregrounding fires visibilitychange + focus + pageshow together. Keyed by
- * userId so nothing leaks across avatars: cursor, epoch and status are already
- * per-user, and this keeps the engine that owns them per-user too. */
+ * userId: a device holds one account, but signing out and in as another must
+ * never inherit the last one's cursor or outbox. */
 
 import { createSync, localStorageCursor, type Sync, type OutboxStore } from "durable-sync/client";
 import { db } from "@/db/db";
@@ -21,8 +16,7 @@ import { mayWriteAs } from "@/lib/identityGate";
 import type { User } from "@/lib/types";
 
 /** The outbox is scoped to the user: it holds the ONLY copy of an unsynced
- * workout, and an unscoped one would push the other avatar's rows under this
- * user's identity. */
+ * workout, and must only ever push that user's rows. */
 function dexieOutbox(userId: string): OutboxStore {
   return {
     add: async (op) => void (await db.outbox.add({ userId, ...op })),
@@ -58,15 +52,10 @@ export function syncFor(user: User): Sync {
     // 3×5. The other device isn't mid-workout, so waiting costs nothing.
     canPull: async () => !(await getActiveWorkout(user.id)),
 
-    // The journal is addressed by the server-side Access identity while these
-    // ops carry the selected avatar. Writing as the wrong one files data under
+    // The journal is addressed by the session cookie while these ops carry
+    // this device's account. Writing under the wrong one files data under
     // someone else, permanently, in an append-only log.
-    canWrite: () => mayWriteAs(user.email),
-
-    // Behind Access the identity header is injected at the edge; local dev
-    // supplies one so the route works.
-    headers: (): Record<string, string> =>
-      process.env.NODE_ENV === "development" ? { "x-liftlog-dev-user": user.email } : {},
+    canWrite: () => mayWriteAs(user.id),
   });
 
   instances.set(user.id, sync);

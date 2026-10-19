@@ -12,6 +12,8 @@ import { Sheet } from "@/components/Sheet";
 import { Stepper } from "@/components/Stepper";
 import { fmtWeight } from "@/lib/weightDisplay";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
+import { addDay, deleteDay, moveExercise, renameDay } from "@/db/programEdit";
+import { FIELD } from "@/components/account/ui";
 import type {
   ProgramExercise,
   Exercise,
@@ -23,6 +25,8 @@ export default function ProgramPage() {
   const { user } = useUser();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingDayId, setAddingDayId] = useState<string | null>(null);
+  // A day id, "new" for the add-day sheet, or null.
+  const [dayEditing, setDayEditing] = useState<string | null>(null);
 
   const data = useLiveQuery(async () => {
     if (!user) return null;
@@ -50,16 +54,21 @@ export default function ProgramPage() {
   if (!user || !data) return <PageSkeleton title="Program" />;
   const { program, days, detail, allExercises } = data;
   const isProgression = program.mode === "progression";
+  // Only a custom routine is free-form: 5×5 and Madcow rotate through their
+  // written days and progress by them.
+  const isRoutine = program.mode === "routine";
 
   // Program edits aren't in the finished-workout sync path — refresh the
   // cloud snapshot so a new device restores them.
-  const onChanged = () => scheduleBackup(user.id, user.email);
+  const onChanged = () => scheduleBackup(user.id);
 
   const editingRow = editingId
     ? [...detail.values()].flat().find((r) => r.pe.id === editingId)
     : undefined;
   const addingDay = addingDayId ? days.find((d) => d.id === addingDayId) : undefined;
   const addingRows = addingDay ? detail.get(addingDay.id) ?? [] : [];
+  const editingDay = dayEditing && dayEditing !== "new" ? days.find((d) => d.id === dayEditing) : undefined;
+  const editingDayRows = editingRow ? detail.get(editingRow.pe.programDayId) ?? [] : [];
 
   return (
     <div className="pb-8">
@@ -78,7 +87,18 @@ export default function ProgramPage() {
           const rows = detail.get(day.id) ?? [];
           return (
             <section key={day.id}>
-              <h2 className="eyebrow mb-2 px-4">{day.name}</h2>
+              <div className="mb-2 flex items-baseline justify-between gap-3 px-4">
+                <h2 className="eyebrow min-w-0 truncate">{day.name}</h2>
+                {isRoutine && (
+                  <button
+                    onClick={() => setDayEditing(day.id)}
+                    aria-label={`Edit day ${day.name}`}
+                    className="-my-3 -mr-3 min-h-[44px] flex-none px-3 text-[15px] text-accent"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
               <div className="glass overflow-hidden">
                 {rows.map(({ pe, ex }) => (
                   <button
@@ -115,6 +135,18 @@ export default function ProgramPage() {
           );
         })}
 
+        {isRoutine && (
+          <button
+            onClick={() => setDayEditing("new")}
+            className="glass row flex min-h-[44px] w-full items-center gap-2 px-4 py-3 text-left text-[17px] text-accent"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Add day
+          </button>
+        )}
+
         <section>
           <h2 className="eyebrow mb-2 px-4">Progression</h2>
           <div className="glass overflow-hidden">
@@ -142,7 +174,7 @@ export default function ProgramPage() {
             <p className="px-4 py-3 text-[13px] leading-relaxed text-ink-faint">
               {isProgression
                 ? "Weights go up automatically after every successful workout. After three failed workouts in a row the weight drops 10%, and repeated stalls drop from 5×5 to 3×5, then 1×5. Tap any exercise to change its sets, reps or weight."
-                : "No automatic progression. Every set prefills from your last workout, and you change the numbers as you go. Tap any exercise to change its sets or reps."}
+                : "No automatic progression. Every set prefills from your last workout, and you change the numbers as you go. Tap any exercise to change its sets, reps or order."}
             </p>
           </div>
         </section>
@@ -153,8 +185,45 @@ export default function ProgramPage() {
           pe={editingRow.pe}
           ex={editingRow.ex}
           mode={program.mode}
+          // Reordering is part of shaping a routine; guided days stay as written.
+          position={
+            isRoutine
+              ? {
+                  index: editingDayRows.findIndex((r) => r.pe.id === editingRow.pe.id),
+                  count: editingDayRows.length,
+                }
+              : undefined
+          }
           onChanged={onChanged}
           onClose={() => setEditingId(null)}
+        />
+      )}
+      {dayEditing === "new" && (
+        <NewDaySheet
+          suggested={`Day ${days.length + 1}`}
+          onAdd={async (name) => {
+            await addDay(program.id, name);
+            onChanged();
+            setDayEditing(null);
+          }}
+          onClose={() => setDayEditing(null)}
+        />
+      )}
+      {editingDay && (
+        <DaySheet
+          day={editingDay}
+          exerciseCount={(detail.get(editingDay.id) ?? []).length}
+          canDelete={days.length > 1}
+          onRename={async (name) => {
+            await renameDay(editingDay.id, name);
+            onChanged();
+          }}
+          onDelete={async () => {
+            await deleteDay(editingDay.id);
+            onChanged();
+            setDayEditing(null);
+          }}
+          onClose={() => setDayEditing(null)}
         />
       )}
       {addingDay && (
@@ -201,12 +270,15 @@ function ProgramExerciseSheet({
   pe,
   ex,
   mode,
+  position,
   onChanged,
   onClose,
 }: {
   pe: ProgramExercise;
   ex: Exercise;
   mode: ProgramMode;
+  /** Where it sits in its day — present when the day can be reordered. */
+  position?: { index: number; count: number };
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -220,8 +292,9 @@ function ProgramExerciseSheet({
     seconds: pe.targetSeconds ?? 30,
     restSeconds: pe.restSeconds ?? ex.restSeconds ?? 90,
   });
+  // `apply` is the only writer, and keeps the ref current itself — so a burst
+  // of taps each steps from the last, not from a stale render.
   const draftRef = useRef(draft);
-  draftRef.current = draft;
   const [confirmRemove, setConfirmRemove] = useState(false);
 
   const apply = (patch: (cur: typeof draft) => Partial<typeof draft>) => {
@@ -299,6 +372,24 @@ function ProgramExerciseSheet({
           Madcow ramps each set to your top; the top advances weekly on the
           Friday PR set.
         </p>
+      )}
+
+      {position && position.count > 1 && (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {([
+            [-1, "Move up", position.index === 0],
+            [1, "Move down", position.index === position.count - 1],
+          ] as const).map(([dir, label, disabled]) => (
+            <button
+              key={label}
+              disabled={disabled}
+              onClick={() => void moveExercise(pe.id, dir).then(onChanged)}
+              className="glass py-3 text-[15px] text-accent disabled:text-ink-faint"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       )}
 
       <button
@@ -507,6 +598,114 @@ function AddExerciseSheet({
       >
         Add exercise
       </button>
+    </Sheet>
+  );
+}
+
+function NewDaySheet({
+  suggested,
+  onAdd,
+  onClose,
+}: {
+  suggested: string;
+  onAdd: (name: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const add = () => {
+    if (busy) return;
+    setBusy(true);
+    void onAdd(name.trim() || suggested).finally(() => setBusy(false));
+  };
+
+  return (
+    <Sheet label="New day" onClose={onClose}>
+      <h2 className="disp mb-3 text-[19px]">New day</h2>
+      <input
+        className={`${FIELD} mb-3`}
+        autoComplete="off"
+        enterKeyHint="done"
+        maxLength={60}
+        placeholder={suggested}
+        aria-label="Day name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && add()}
+        data-selectable
+      />
+      <button
+        onClick={add}
+        disabled={busy}
+        className="w-full rounded-full bg-accent py-3.5 text-[15px] font-semibold text-on-accent disabled:opacity-50"
+      >
+        Add day
+      </button>
+    </Sheet>
+  );
+}
+
+function DaySheet({
+  day,
+  exerciseCount,
+  canDelete,
+  onRename,
+  onDelete,
+  onClose,
+}: {
+  day: ProgramDay;
+  exerciseCount: number;
+  /** A routine keeps at least one day. */
+  canDelete: boolean;
+  onRename: (name: string) => Promise<void>;
+  onDelete: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState(day.name);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const done = async () => {
+    if (name.trim() && name.trim() !== day.name) await onRename(name);
+    onClose();
+  };
+
+  return (
+    <Sheet label={`Edit day ${day.name}`} onClose={() => void done()}>
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="disp text-[19px]">Edit day</h2>
+        <button onClick={() => void done()} className="-mr-2 px-3 py-2 text-[17px] font-semibold text-accent">
+          Done
+        </button>
+      </div>
+      <input
+        className={FIELD}
+        autoComplete="off"
+        enterKeyHint="done"
+        maxLength={60}
+        aria-label="Day name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && void done()}
+        data-selectable
+      />
+      <p className="mt-2 px-1 text-[12px] text-ink-faint">
+        {exerciseCount
+          ? `Deleting it takes its ${exerciseCount} exercise${exerciseCount === 1 ? "" : "s"} out of the program. `
+          : ""}
+        Past workouts and their history stay as they were.
+      </p>
+      {canDelete && (
+        <button
+          onClick={() => {
+            if (confirmDelete) void onDelete();
+            else setConfirmDelete(true);
+          }}
+          className={`mt-5 w-full rounded-full py-3.5 text-[15px] font-semibold ${
+            confirmDelete ? "bg-plate-25 text-white" : "glass text-plate-25"
+          }`}
+        >
+          {confirmDelete ? `Delete ${day.name} — tap to confirm` : "Delete day"}
+        </button>
+      )}
     </Sheet>
   );
 }

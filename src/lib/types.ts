@@ -92,6 +92,9 @@ export interface Workout {
    * mid-workout (which rewrites the program) can't turn skipped sets into a
    * success. Absent on workouts from before it was recorded. */
   prescribedSets?: Record<string, number>;
+  /** When this finished workout was last corrected (ms). Edits sync as ops;
+   * a phone keeps whichever edit is latest. Absent = never edited. */
+  editedAt?: number;
 }
 
 export interface SetEntry {

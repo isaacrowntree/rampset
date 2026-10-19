@@ -8,7 +8,9 @@
  * this database.
  *
  * Unit of sync: one FINISHED workout — the workout row, its sets, and the
- * working weights it produced. Ops are idempotent; opId is the workout id. */
+ * working weights it produced. Ops are idempotent; opId is the workout id.
+ * A correction made later is its own op, carrying the whole corrected
+ * workout; see EditedWorkoutOp. */
 
 import { db } from "./db";
 import type { Exercise, SetEntry, Workout } from "@/lib/types";
@@ -49,7 +51,16 @@ export interface DeleteWorkoutOp {
   kind: "deleteWorkout";
   payload: DeleteWorkoutPayload;
 }
-export type SyncOp = FinishedWorkoutOp | DeleteWorkoutOp;
+/** A finished workout, corrected. Carries the whole workout as edited, so a
+ * phone can replace its copy outright — and `editedAt`, because phones see
+ * edits in different orders (their own comes back after others'), and only
+ * "latest edit wins" leaves them all agreeing. */
+export interface EditedWorkoutOp {
+  opId: string;
+  kind: "editedWorkout";
+  payload: FinishedWorkoutPayload & { editedAt: number };
+}
+export type SyncOp = FinishedWorkoutOp | DeleteWorkoutOp | EditedWorkoutOp;
 
 /** The journal has no delete primitive, so a deletion is itself an op. Keyed
  * distinctly from the workout's own opId, which is the bare workout id. */
@@ -103,6 +114,45 @@ export async function buildFinishedWorkoutOp(
   };
 }
 
+/** Snapshot a correction to a finished workout. `withWeights` only when the
+ * edit recomputed progression (see saveFinishedWorkout): asserting weights
+ * from an older workout's edit would clobber progress made since. */
+export async function buildEditedWorkoutOp(
+  workoutId: string,
+  editedAt: number,
+  withWeights: boolean,
+): Promise<EditedWorkoutOp | null> {
+  const finished = await buildFinishedWorkoutOp(workoutId);
+  if (!finished) return null;
+  return {
+    opId: `edit:${workoutId}:${editedAt}`,
+    kind: "editedWorkout",
+    payload: {
+      ...finished.payload,
+      workout: { ...finished.payload.workout, editedAt },
+      weights: withWeights ? finished.payload.weights : [],
+      editedAt,
+    },
+  };
+}
+
+/** Queue a correction: stamp it locally, then send it like any other op. */
+export async function enqueueEditedWorkout(
+  userId: string,
+  workoutId: string,
+  withWeights: boolean,
+): Promise<void> {
+  const editedAt = Date.now();
+  await db.workouts.update(workoutId, { editedAt });
+  const op = await buildEditedWorkoutOp(workoutId, editedAt, withWeights);
+  const user = await db.users.get(userId);
+  if (!op || !user) return;
+  const { syncFor } = await import("@/lib/syncFor");
+  const sync = syncFor(user);
+  await sync.enqueue(op);
+  void sync.now({ force: true }).catch(() => {});
+}
+
 /** Queue a finished workout. Local and durable — no network — so it is safe to
  * await on the finish path, and it is what guarantees nothing is lost when the
  * push has no connection. */
@@ -122,6 +172,7 @@ export async function enqueueFinishedWorkout(
 /** Apply one journal op to this device. Existing workouts are never touched. */
 export async function applyOp(userId: string, op: SyncOp): Promise<boolean> {
   if (op.kind === "deleteWorkout") return applyDeleteWorkout(userId, op.payload);
+  if (op.kind === "editedWorkout") return applyEditedWorkout(userId, op.payload);
   if (op.kind !== "finishedWorkout") return false;
 
   const { workout, sets, weights, exercises } = op.payload;
@@ -150,6 +201,35 @@ export async function applyOp(userId: string, op: SyncOp): Promise<boolean> {
     },
   );
   return created;
+}
+
+async function applyEditedWorkout(
+  userId: string,
+  payload: EditedWorkoutOp["payload"],
+): Promise<boolean> {
+  const { workout, sets, weights, exercises, editedAt } = payload;
+  if (workout.userId !== userId) return false;
+
+  let applied = false;
+  await db.transaction(
+    "rw",
+    [db.workouts, db.sets, db.programExercises, db.exercises, db.tombstones],
+    async () => {
+      if (await db.tombstones.get(workout.id)) return; // deleted stays deleted
+      const current = await db.workouts.get(workout.id);
+      if ((current?.editedAt ?? 0) >= editedAt) return; // we have this edit, or a later one
+
+      for (const ex of exercises ?? []) {
+        if (!(await db.exercises.get(ex.id))) await db.exercises.put(ex);
+      }
+      await db.workouts.put({ ...workout, editedAt });
+      await db.sets.where({ workoutId: workout.id }).delete();
+      if (sets.length) await db.sets.bulkPut(sets);
+      for (const w of weights) await applyWeight(w);
+      applied = true;
+    },
+  );
+  return applied;
 }
 
 async function applyDeleteWorkout(
