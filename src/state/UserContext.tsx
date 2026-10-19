@@ -16,7 +16,7 @@ import {
 } from "react";
 import { db } from "@/db/db";
 import { adoptAccount, localUser, userFromAccount, wipeDevice, type Account } from "@/db/account";
-import { currentAccount } from "@/lib/auth";
+import { currentAccount, updateProfile } from "@/lib/auth";
 import { setSessionAccount } from "@/lib/identityGate";
 import type { User } from "@/lib/types";
 
@@ -33,8 +33,8 @@ interface UserContextValue {
   adopt: (account: Account) => Promise<void>;
   /** The server returned a newer copy of the account (name, email, theme). */
   refresh: (account: Account) => Promise<void>;
-  /** Change this device's copy now — offline included; the server follows. */
-  patchUser: (patch: Partial<Pick<User, "theme" | "name">>) => Promise<void>;
+  /** Change this device's copy now — offline included; the account follows. */
+  patchUser: (patch: Partial<Pick<User, "theme">>) => Promise<void>;
   /** Forget this device's account and data, and start over. */
   leave: () => Promise<void>;
 }
@@ -59,23 +59,29 @@ export function UserProvider({ children }: { children: ReactNode }) {
     (async () => {
       const local = await localUser();
       if (cancelled) return;
-      // Never wait on the network to show something: the app for a device
-      // with an account, onboarding for one without. A live session found
-      // below adopts on top.
-      setUser(local);
-      setReady(true);
-
-      const account = await currentAccount();
-      if (cancelled) return;
+      const checking = currentAccount();
 
       if (local) {
+        // The data is local: never wait on the network to show it.
+        setUser(local);
+        setReady(true);
+        let account = await checking;
+        if (cancelled) return;
         if (account === undefined) return; // offline: carry on as we were
         if (account?.id === local.id) {
           setSessionAccount(account.id);
           setSession("signed-in");
+          // A change made here while offline goes up before anything comes
+          // down — the server's copy is the older one.
+          const pending = pendingProfile();
+          if (pending) {
+            account = await updateProfile({ profile: pending }).catch(() => account!);
+            if (account.profile.theme === pending.theme) clearPendingProfile();
+          }
           // Name, recovery email and theme may have changed on another device.
-          await db.users.put(userFromAccount(account));
-          if (!cancelled) setUser(userFromAccount(account));
+          const fresh = { ...userFromAccount(account), ...(pendingProfile() ?? {}) };
+          await db.users.put(fresh);
+          if (!cancelled) setUser(fresh);
         } else {
           // Signed out — or, rarely, signed in as someone else in another
           // tab. Either way this device's data must not go out under it.
@@ -87,6 +93,12 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
       // No account on this device. A live session (data cleared, or a second
       // tab finished onboarding) adopts straight in; otherwise onboarding.
+      // Wait briefly for the answer: onboarding shown while a session is
+      // still being adopted would let someone start a second account on top
+      // of it. A slow answer forfeits — onboarding, and the session is
+      // ignored (signing in picks it up again).
+      const account = await Promise.race([checking, timeout(SESSION_WAIT_MS)]);
+      if (cancelled) return;
       if (account) {
         const adopted = await adoptAndRestore(account);
         if (cancelled) return;
@@ -94,6 +106,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
         setSession("signed-in");
         setUser(adopted);
       }
+      setReady(true);
     })();
     return () => {
       cancelled = true;
@@ -138,11 +151,18 @@ export function UserProvider({ children }: { children: ReactNode }) {
     setUser(next);
   };
 
-  const patchUser = async (patch: Partial<Pick<User, "theme" | "name">>) => {
+  /** Here first, then the account — now if online, else on the next online
+   * launch (see boot), so an offline change isn't undone by the server's
+   * older copy. */
+  const patchUser = async (patch: Partial<Pick<User, "theme">>) => {
     if (!user) return;
     const next = { ...user, ...patch };
     await db.users.put(next);
     setUser(next);
+    if (user.id.startsWith("local_")) return;
+    savePendingProfile(patch);
+    const account = await updateProfile({ profile: patch }).catch(() => null);
+    if (account) clearPendingProfile();
   };
 
   const leave = async () => {
@@ -158,6 +178,38 @@ export function UserProvider({ children }: { children: ReactNode }) {
       {children}
     </UserContext.Provider>
   );
+}
+
+const SESSION_WAIT_MS = 2500;
+const PENDING_KEY = "liftlog.pendingProfile";
+
+function timeout(ms: number): Promise<undefined> {
+  return new Promise((r) => setTimeout(() => r(undefined), ms));
+}
+
+function pendingProfile(): Partial<Pick<User, "theme">> | null {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    return raw ? (JSON.parse(raw) as Partial<Pick<User, "theme">>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePendingProfile(patch: Partial<Pick<User, "theme">>): void {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ ...pendingProfile(), ...patch }));
+  } catch {
+    // private mode — it syncs now or not at all
+  }
+}
+
+function clearPendingProfile(): void {
+  try {
+    localStorage.removeItem(PENDING_KEY);
+  } catch {
+    // nothing to clear
+  }
 }
 
 /** Set up the device for `account`, then — when it has no workouts yet, i.e.

@@ -7,10 +7,15 @@
 import { startAuthentication, startRegistration, WebAuthnError } from "@simplewebauthn/browser";
 import type { Account } from "@/db/account";
 
+/** `cancelled`: the lifter dismissed the passkey sheet — nothing to show.
+ * `already-registered`: this device already has the passkey — the goal met. */
+export type AuthErrorKind = "cancelled" | "already-registered";
+
 export class AuthError extends Error {
   constructor(
     message: string,
     readonly status = 0,
+    readonly kind?: AuthErrorKind,
   ) {
     super(message);
   }
@@ -41,11 +46,6 @@ async function call<T>(action: string, body?: unknown, method = body === undefin
   return data as T;
 }
 
-/** Dismissing the passkey sheet. Not an error to show — the lifter chose it. */
-export const CANCELLED = 499;
-/** Adding a passkey this device already has: the goal is met. */
-export const ALREADY_REGISTERED = 409;
-
 /** The passkey prompt, with the browser's errors turned into plain words. */
 async function ceremony<T>(run: () => Promise<T>): Promise<T> {
   try {
@@ -54,10 +54,10 @@ async function ceremony<T>(run: () => Promise<T>): Promise<T> {
     // Dismissing the sheet surfaces as NotAllowedError — bare, or wrapped.
     const name = e instanceof Error ? ((e.cause as Error | undefined)?.name ?? e.name) : "";
     if (name === "NotAllowedError" || (e instanceof WebAuthnError && e.code === "ERROR_CEREMONY_ABORTED")) {
-      throw new AuthError("Cancelled.", CANCELLED);
+      throw new AuthError("Cancelled.", 0, "cancelled");
     }
     if (e instanceof WebAuthnError && e.code === "ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED") {
-      throw new AuthError("This device already has a passkey for your account.", ALREADY_REGISTERED);
+      throw new AuthError("This device already has a passkey for your account.", 0, "already-registered");
     }
     throw new AuthError("This browser couldn't use a passkey.");
   }
@@ -66,7 +66,7 @@ async function ceremony<T>(run: () => Promise<T>): Promise<T> {
 /** The message to show for a failed auth step, or null when there's nothing
  * to say (the lifter dismissed the prompt). */
 export function authErrorMessage(e: unknown, fallback: string): string | null {
-  if (e instanceof AuthError) return e.status === CANCELLED ? null : e.message;
+  if (e instanceof AuthError) return e.kind === "cancelled" ? null : e.message;
   return fallback;
 }
 

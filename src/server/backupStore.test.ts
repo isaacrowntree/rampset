@@ -62,7 +62,7 @@ describe("backupKeys", () => {
   it("namespaces by account and keeps a latest pointer", () => {
     const keys = backupKeys("u_Ab-9", new Date("2026-07-03T10:30:00Z"));
     expect(keys.latest).toBe("backups/u_Ab-9/latest.json");
-    expect(keys.snapshot).toBe("snapshots/u_Ab-9/2026-07-03T10-30-00.json");
+    expect(keys.snapshot).toBe("snapshots/u_Ab-9/2026-07-03T10.json");
   });
 
   it("strips path-hostile characters", () => {
@@ -110,7 +110,7 @@ describe("storeBackup", () => {
     await storeBackup(bucket, "u_a", own, new Date("2026-07-03T11:00:00Z"));
 
     // The snapshot is the forensic record of what THIS device held.
-    expect(store.get("snapshots/u_a/2026-07-03T11-00-00.json")).toBe(own);
+    expect(store.get("snapshots/u_a/2026-07-03T11.json")).toBe(own);
   });
 
   /** Union-by-id can never drop a row, so a deleted workout would walk back in
@@ -197,6 +197,37 @@ describe("deleteBackups", () => {
 
 describe("mergeBackups", () => {
   const file = (over: Record<string, unknown> = {}) => JSON.parse(backup(over));
+
+  // An edit removes a set. A union would keep it forever — and the journal
+  // can't fix that later, because the restored row already carries the
+  // edit's stamp. A workout's sets come from whichever side has it newest.
+  it("drops a set an edit removed", () => {
+    const existing = file({
+      workouts: [{ id: "w1" }],
+      sets: [{ id: "a", workoutId: "w1" }, { id: "b", workoutId: "w1" }],
+    });
+    const incoming = file({ workouts: [{ id: "w1", editedAt: 10 }], sets: [{ id: "a", workoutId: "w1" }] });
+    expect(mergeBackups(existing, incoming, []).sets?.map((s) => s.id)).toEqual(["a"]);
+  });
+
+  // A phone that hasn't pulled the edit yet uploads its old copy. That must
+  // not undo the correction for every phone restored from the cloud later.
+  it("keeps the newer edit when a stale phone uploads its older copy", () => {
+    const existing = file({
+      workouts: [{ id: "w1", editedAt: 10 }],
+      sets: [{ id: "a", workoutId: "w1", reps: 3 }],
+    });
+    const incoming = file({
+      workouts: [{ id: "w1" }, { id: "w2" }],
+      sets: [{ id: "a", workoutId: "w1", reps: 5 }, { id: "c", workoutId: "w2" }],
+    });
+    const merged = mergeBackups(existing, incoming, []);
+    expect(merged.workouts).toEqual(expect.arrayContaining([{ id: "w1", editedAt: 10 }, { id: "w2" }]));
+    expect(merged.sets).toEqual(
+      expect.arrayContaining([{ id: "a", workoutId: "w1", reps: 3 }, { id: "c", workoutId: "w2" }]),
+    );
+    expect(merged.sets).toHaveLength(2);
+  });
 
   it("returns the incoming file when nothing is published yet", () => {
     const incoming = file({ workouts: [{ id: "w1" }] });

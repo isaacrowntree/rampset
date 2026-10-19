@@ -367,6 +367,16 @@ export async function finishWorkout(workoutId: string): Promise<void> {
   await advanceLinearProgression(program, workout, sets);
 }
 
+/** Everything an edit could change on a finished workout — its sets as
+ * logged, its note, its body weight. Equal signatures: nothing to save. */
+export async function workoutSignature(workoutId: string): Promise<string> {
+  const w = await db.workouts.get(workoutId);
+  const sets = (await db.sets.where({ workoutId }).toArray())
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((s) => [s.id, s.reps, s.weightKg, s.seconds, s.note]);
+  return JSON.stringify([w?.notes ?? "", w?.bodyWeightKg ?? null, sets]);
+}
+
 /** Save edits to a workout that's already finished — reopened from History
  * in the workout screen. Its date and endTs stay put: it's the same session,
  * corrected, not a new one.

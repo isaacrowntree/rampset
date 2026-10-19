@@ -1,5 +1,4 @@
-/** The few control styles the account screens share — the same ones the rest
- * of the app uses for fields and full-width actions. */
+/** Control styles shared across screens: text fields and full-width actions. */
 
 export const FIELD =
   "w-full rounded-[12px] bg-fill px-4 py-3 text-[17px] text-ink outline-none placeholder:text-ink-faint focus:ring-2 focus:ring-accent";

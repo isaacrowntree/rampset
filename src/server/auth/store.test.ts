@@ -7,6 +7,7 @@ import {
   CODE_MAX_ATTEMPTS,
   CODE_TTL_MS,
   CODES_PER_HOUR,
+  MAX_CODE_FAILURES,
   SESSION_TTL_MS,
   type Profile,
 } from "./store";
@@ -150,6 +151,24 @@ describe("codes", () => {
     store.issueCode("a@example.com", "recover", "u1", "old", 0);
     store.issueCode("a@example.com", "recover", "u1", "new", 1);
     expect(store.redeemCode("a@example.com", "recover", "old", 2)).toBeNull();
+  });
+
+  // Five guesses per code, five codes an hour, would still be hundreds of
+  // guesses a day against one email. Failures count across codes.
+  it(`lock the email for a day after ${MAX_CODE_FAILURES} wrong guesses, however many codes`, () => {
+    let failures = 0;
+    for (let round = 0; failures < MAX_CODE_FAILURES; round++) {
+      store.issueCode("a@example.com", "recover", "u1", `real${round}`, round * 61 * 60 * 1000);
+      for (let i = 0; i < CODE_MAX_ATTEMPTS && failures < MAX_CODE_FAILURES; i++, failures++) {
+        store.redeemCode("a@example.com", "recover", "wrong", round * 61 * 60 * 1000 + 1);
+      }
+    }
+    const later = 5 * 61 * 60 * 1000;
+    store.issueCode("a@example.com", "recover", "u1", "right", later);
+    expect(store.redeemCode("a@example.com", "recover", "right", later + 1)).toBeNull();
+    // A day on, it works again.
+    store.issueCode("a@example.com", "recover", "u1", "right", later + DAY);
+    expect(store.redeemCode("a@example.com", "recover", "right", later + DAY + 1)).toEqual({ userId: "u1" });
   });
 
   it(`are capped at ${CODES_PER_HOUR} an hour per email`, () => {

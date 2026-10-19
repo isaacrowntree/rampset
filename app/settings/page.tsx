@@ -18,7 +18,9 @@ import { SyncStatusRow } from "@/components/SyncStatusRow";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { Sheet } from "@/components/Sheet";
 import { EmailCodeForm } from "@/components/account/EmailCodeForm";
-import { unsyncedCount } from "@/db/account";
+import { legacyProfiles, moveLegacyProfile, unsyncedCount, type LegacyProfile } from "@/db/account";
+import { getActiveWorkout } from "@/db/activeWorkout";
+import { enqueueWorkouts } from "@/db/sync";
 import { importIntoStore } from "@/db/importStore";
 import { parseExport, type DetectedExport } from "@/lib/importers/detect";
 import {
@@ -39,7 +41,10 @@ export default function SettingsPage() {
   const [pendingImport, setPendingImport] = useState<DetectedExport | null>(null);
   const [emailOffered, setEmailOffered] = useState(false);
   const [editingEmail, setEditingEmail] = useState(false);
-  const [pendingLeave, setPendingLeave] = useState<{ kind: "sign-out"; unsynced: number } | { kind: "delete" } | null>(null);
+  const [pendingLeave, setPendingLeave] = useState<
+    { kind: "sign-out"; unsynced: number; inProgress: boolean } | { kind: "delete" } | null
+  >(null);
+  const [pendingMove, setPendingMove] = useState<LegacyProfile | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = useState<
@@ -56,6 +61,13 @@ export default function SettingsPage() {
       exercises: await db.exercises.where({ userId: user.id }).count(),
     };
   }, [user?.id]);
+
+  // Lifters this phone held before accounts, other than the account itself.
+  const legacy = useLiveQuery(
+    async () => (user ? (await legacyProfiles()).filter((p) => p.id !== user.id) : []),
+    [user?.id],
+    [] as LegacyProfile[],
+  );
 
   const program = useLiveQuery(
     async () => (user ? await db.programs.where({ userId: user.id }).first() : null),
@@ -77,7 +89,7 @@ export default function SettingsPage() {
   const showError = (message: string) => {
     setNotice(null);
     setError(message);
-    requestAnimationFrame(() => errorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+    requestAnimationFrame(() => errorRef.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" }));
   };
 
   const fail = (prefix: string) => (e: unknown) =>
@@ -105,11 +117,15 @@ export default function SettingsPage() {
   };
 
   /** A skin is this device's choice first; the account catches up when it
-   * can, so the next new phone starts in it too. */
-  const setTheme = async (theme: "dark" | "light") => {
-    await patchUser({ theme });
-    if (canReachAccount) void updateProfile({ profile: { theme } }).then(refresh, () => {});
-  };
+   * can (see patchUser), so the next new phone starts in it too. */
+  const setTheme = (theme: "dark" | "light") => void patchUser({ theme });
+
+  const askSignOut = async () =>
+    setPendingLeave({
+      kind: "sign-out",
+      unsynced: deviceOnly ? 0 : await unsyncedCount(user.id),
+      inProgress: Boolean(await getActiveWorkout(user.id)),
+    });
 
   const confirmLeave = async () => {
     const action = pendingLeave;
@@ -118,11 +134,24 @@ export default function SettingsPage() {
     setError(null);
     setNotice(action.kind === "delete" ? "Deleting your account…" : "Signing out…");
     try {
-      if (action.kind === "delete") await deleteAccount();
-      else if (!deviceOnly) await signOut().catch(() => {}); // offline: the device is cleared regardless
+      if (action.kind === "delete") {
+        await deleteAccount();
+      } else if (!deviceOnly) {
+        // Last chance for the cloud copy to catch up (program edits, imports
+        // wait on a debounce). Best effort — the outbox count was the warning.
+        await backupToCloud(user.id).catch(() => {});
+        // Must reach the server: offline, the session would outlive the wipe
+        // and the next online launch would sign straight back in.
+        await signOut();
+      }
       await leave();
     } catch (e) {
-      fail(action.kind === "delete" ? "Couldn't delete the account" : "Couldn't sign out")(e);
+      const message = authErrorMessage(e, "try again");
+      showError(
+        action.kind === "delete"
+          ? `Couldn't delete the account: ${message}`
+          : "Couldn't sign out — you need a connection to sign out. Your data is still here.",
+      );
     }
   };
 
@@ -146,6 +175,7 @@ export default function SettingsPage() {
     try {
       const s = await importIntoStore(user.id, detected.result);
       scheduleBackup(user.id);
+      if (canReachAccount) void enqueueWorkouts(user.id, s.workoutIds);
       setNotice(
         `Imported ${s.workoutsAdded.toLocaleString()} workouts${
           s.workoutsSkipped ? ` (${s.workoutsSkipped.toLocaleString()} already here, skipped)` : ""
@@ -174,6 +204,7 @@ export default function SettingsPage() {
     try {
       const s = await restoreBackup(user.id, await file.text());
       scheduleBackup(user.id);
+      if (canReachAccount) void enqueueWorkouts(user.id, await finishedWorkoutIds(user.id));
       setNotice(
         `Restored ${s.workouts.toLocaleString()} workouts, ${s.sets.toLocaleString()} sets, ${s.exercises} exercises.`,
       );
@@ -181,6 +212,20 @@ export default function SettingsPage() {
       fail("Restore failed")(e);
     } finally {
       if (restoreRef.current) restoreRef.current.value = "";
+    }
+  };
+
+  const moveIn = async (profile: LegacyProfile) => {
+    setPendingMove(null);
+    setError(null);
+    setNotice(`Moving ${profile.name}'s history…`);
+    try {
+      const { workoutIds } = await moveLegacyProfile(profile.id, user.id);
+      scheduleBackup(user.id);
+      if (canReachAccount) void enqueueWorkouts(user.id, workoutIds);
+      setNotice(`Moved ${workoutIds.length.toLocaleString()} workouts into your account.`);
+    } catch (e) {
+      fail("Couldn't move that history")(e);
     }
   };
 
@@ -238,7 +283,7 @@ export default function SettingsPage() {
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-[15px] font-medium">{user.name}</span>
-            <span className="block truncate text-[12.5px] text-ink-faint">
+            <span className="block text-[12.5px] leading-snug text-ink-faint">
               {deviceOnly
                 ? "On this device only — no sync"
                 : session === "signed-out"
@@ -258,7 +303,7 @@ export default function SettingsPage() {
           </button>
         )}
 
-        {emailOffered && canReachAccount && (
+        {canReachAccount && (emailOffered || user.email) && (
           <button
             onClick={() => setEditingEmail(true)}
             className="flex w-full items-center justify-between gap-3 border-b border-line px-4 py-3.5 text-left"
@@ -343,6 +388,32 @@ export default function SettingsPage() {
         </p>
       </div>
 
+      {legacy.length > 0 && (
+        <>
+          <h2 className="eyebrow mb-2 px-4">From before accounts</h2>
+          <div className="mb-1 glass">
+            {legacy.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setPendingMove(p)}
+                className="flex w-full items-center justify-between gap-3 border-b border-line px-4 py-3.5 text-left last:border-b-0"
+              >
+                <span className="min-w-0">
+                  <span className="block text-[15px] font-medium">{p.name}</span>
+                  <span className="block text-[12.5px] text-ink-faint">
+                    {p.workouts.toLocaleString()} {p.workouts === 1 ? "workout" : "workouts"} on this phone
+                  </span>
+                </span>
+                <Chevron />
+              </button>
+            ))}
+          </div>
+          <p className="mb-5 px-4 text-[12.5px] leading-relaxed text-ink-faint">
+            History this phone kept before accounts. Move yours into your account to sync it.
+          </p>
+        </>
+      )}
+
       <h2 className="eyebrow mb-2 px-4">Your data</h2>
       <div className="glass">
         <div className="flex items-center justify-between border-b border-line px-4 py-3.5">
@@ -367,7 +438,7 @@ export default function SettingsPage() {
           <span className="mono text-accent">↓</span>
         </button>
 
-        <SyncStatusRow />
+        {!deviceOnly && <SyncStatusRow />}
 
         {canReachAccount && (
           <>
@@ -485,12 +556,10 @@ export default function SettingsPage() {
       {/* Leaving goes last, on its own, like iOS. */}
       <div className="mt-5 glass">
         <button
-          onClick={async () =>
-            setPendingLeave({ kind: "sign-out", unsynced: deviceOnly ? 0 : await unsyncedCount(user.id) })
-          }
-          className={`flex min-h-[44px] w-full items-center px-4 py-3.5 text-left text-[15px] font-medium ${
-            deviceOnly ? "text-danger" : "text-accent"
-          } ${canReachAccount ? "border-b border-line" : ""}`}
+          onClick={() => void askSignOut()}
+          className={`flex min-h-[44px] w-full items-center px-4 py-3.5 text-left text-[15px] font-medium text-danger ${
+            canReachAccount ? "border-b border-line" : ""
+          }`}
         >
           {deviceOnly ? "Erase this device" : "Sign out"}
         </button>
@@ -574,6 +643,17 @@ export default function SettingsPage() {
         />
       )}
 
+      {pendingMove && (
+        <ConfirmSheet
+          title={`Move ${pendingMove.name}'s history?`}
+          body={`${pendingMove.workouts.toLocaleString()} workouts, with that program and its weights, become your account's — replacing what's on this phone for it — and sync to your other devices.`}
+          confirmLabel="Move into my account"
+          tone="positive"
+          onCancel={() => setPendingMove(null)}
+          onConfirm={() => void moveIn(pendingMove)}
+        />
+      )}
+
       {pendingLeave && (
         <ConfirmSheet
           title={pendingLeave.kind === "delete" ? "Delete your account?" : deviceOnly ? "Erase this device?" : "Sign out?"}
@@ -582,11 +662,18 @@ export default function SettingsPage() {
               ? "This permanently deletes your account, your synced workouts and your cloud backups, and erases this device. Download a backup first if you want to keep your history."
               : deviceOnly
                 ? "Your history lives only on this device, so this deletes it. Download a backup first if you want to keep it."
-                : `${
-                  pendingLeave.unsynced
-                    ? `${pendingLeave.unsynced} ${pendingLeave.unsynced === 1 ? "workout hasn't" : "workouts haven't"} synced yet and will be lost. `
-                    : ""
-                }This clears Rampset from this device. Sign back in to get your history back.`
+                : [
+                    pendingLeave.unsynced
+                      ? `${pendingLeave.unsynced} ${pendingLeave.unsynced === 1 ? "workout hasn't" : "workouts haven't"} synced yet and will be lost.`
+                      : "",
+                    pendingLeave.inProgress ? "The workout in progress will be lost." : "",
+                    legacy.length
+                      ? `History from before accounts (${legacy.map((p) => p.name).join(", ")}) is erased too.`
+                      : "",
+                    "This clears Rampset from this device. Sign back in to get your history back.",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
           }
           confirmLabel={pendingLeave.kind === "delete" ? "Delete account" : deviceOnly ? "Erase this device" : "Sign out"}
           onCancel={() => setPendingLeave(null)}
@@ -615,8 +702,8 @@ export default function SettingsPage() {
       <h2 className="eyebrow mb-2 mt-5 px-4">About</h2>
       <div className="glass px-4 py-3.5 text-[12.5px] leading-relaxed text-ink-faint">
         Rampset runs on this device — every workout is stored locally and works
-        offline. Your account keeps your devices in sync and backs your history
-        up to the cloud.
+        offline.
+        {!deviceOnly && " Your account keeps your devices in sync and backs your history up to the cloud."}
       </div>
     </div>
   );
@@ -676,6 +763,10 @@ function importSummary({ source, result }: DetectedExport): string {
   return `Found ${n.toLocaleString()} ${n === 1 ? "workout" : "workouts"} from ${source}, ${fmt(dates[0])} – ${fmt(
     dates[dates.length - 1],
   )}. They're added to your history; nothing is replaced, and workouts already here are skipped.`;
+}
+
+async function finishedWorkoutIds(userId: string): Promise<string[]> {
+  return (await db.workouts.where({ userId }).toArray()).filter((w) => w.endTs !== undefined).map((w) => w.id);
 }
 
 function fileSlug(name: string): string {

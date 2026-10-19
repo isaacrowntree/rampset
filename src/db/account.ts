@@ -9,6 +9,7 @@
  * line up across both. */
 
 import { db } from "./db";
+import { exportBackup, restoreBackup } from "./backup";
 import { buildProgramFromTemplate } from "./programSwitch";
 import { getTemplate, PROGRAM_TEMPLATES } from "@/lib/programTemplates";
 import type { User } from "@/lib/types";
@@ -56,9 +57,84 @@ export async function adoptAccount(account: Account): Promise<User> {
   return user;
 }
 
+/** Account ids: server-issued (`u_…`), or device-only (`local_…`). Anything
+ * else is a profile from before accounts — see legacyProfiles. */
+export function isAccountId(id: string): boolean {
+  return id.startsWith("u_") || id.startsWith("local_");
+}
+
 /** The device's account, if it has one. One account per device. */
 export async function localUser(): Promise<User | null> {
-  return (await db.users.toCollection().first()) ?? null;
+  return (await db.users.filter((u) => isAccountId(u.id)).first()) ?? null;
+}
+
+export interface LegacyProfile {
+  id: string;
+  name: string;
+  workouts: number;
+}
+
+/** Lifters this phone held before accounts — seeded from config, often more
+ * than one on a shared phone. Their history stays here, untouched, until
+ * someone moves it into an account. */
+export async function legacyProfiles(): Promise<LegacyProfile[]> {
+  const users = await db.users.filter((u) => !isAccountId(u.id)).toArray();
+  return Promise.all(
+    users.map(async (u) => ({
+      id: u.id,
+      name: u.name,
+      workouts: await db.workouts.where({ userId: u.id }).count(),
+    })),
+  );
+}
+
+/** Move one old profile's history into the account: its program, weights,
+ * exercises and workouts replace the account's on this device (a restore,
+ * re-homed — see moveBackup), and the old profile is removed. Any other old
+ * profile stays exactly as it was. Returns the workouts moved, for syncing. */
+export async function moveLegacyProfile(legacyId: string, userId: string): Promise<{ workoutIds: string[] }> {
+  const json = await exportBackup(legacyId);
+  // One transaction: the old rows go and the moved ones land together, or
+  // nothing changes. (Moved ids can equal the old ones — workout ids carry
+  // no owner — so the old rows have to go first.)
+  await db.transaction("rw", PROFILE_TABLES(), async () => {
+    await removeProfileRows(legacyId);
+    await restoreBackup(userId, json);
+  });
+  const workouts = await db.workouts.where({ userId }).toArray();
+  return { workoutIds: workouts.filter((w) => w.endTs !== undefined).map((w) => w.id) };
+}
+
+const PROFILE_TABLES = () => [
+  db.users,
+  db.exercises,
+  db.programs,
+  db.programDays,
+  db.programExercises,
+  db.workouts,
+  db.sets,
+  db.outbox,
+  db.tombstones,
+];
+
+async function removeProfileRows(userId: string): Promise<void> {
+  await db.transaction(
+    "rw",
+    PROFILE_TABLES(),
+    async () => {
+      const programIds = (await db.programs.where({ userId }).toArray()).map((p) => p.id);
+      const dayIds = (await db.programDays.where("programId").anyOf(programIds).toArray()).map((d) => d.id);
+      await db.programExercises.where("programDayId").anyOf(dayIds).delete();
+      await db.programDays.where("programId").anyOf(programIds).delete();
+      await db.programs.where({ userId }).delete();
+      await db.exercises.where({ userId }).delete();
+      await db.sets.where({ userId }).delete();
+      await db.workouts.where({ userId }).delete();
+      await db.outbox.where({ userId }).delete();
+      await db.tombstones.where({ userId }).delete();
+      await db.users.delete(userId);
+    },
+  );
 }
 
 /** Workouts recorded here that haven't reached the server yet — what signing

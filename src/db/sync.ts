@@ -142,7 +142,10 @@ export async function enqueueEditedWorkout(
   workoutId: string,
   withWeights: boolean,
 ): Promise<void> {
-  const editedAt = Date.now();
+  // Never behind the edit this phone already holds: a clock running slow
+  // must not stamp a correction older than the one it corrects.
+  const current = await db.workouts.get(workoutId);
+  const editedAt = Math.max(Date.now(), (current?.editedAt ?? 0) + 1);
   await db.workouts.update(workoutId, { editedAt });
   const op = await buildEditedWorkoutOp(workoutId, editedAt, withWeights);
   const user = await db.users.get(userId);
@@ -150,6 +153,21 @@ export async function enqueueEditedWorkout(
   const { syncFor } = await import("@/lib/syncFor");
   const sync = syncFor(user);
   await sync.enqueue(op);
+  void sync.now({ force: true }).catch(() => {});
+}
+
+/** Queue workouts that arrived on this phone some other way — an import, a
+ * backup file, a profile moved into the account — so every other phone gets
+ * them too. Idempotent: phones that already hold one ignore its op. */
+export async function enqueueWorkouts(userId: string, workoutIds: string[]): Promise<void> {
+  const user = await db.users.get(userId);
+  if (!user) return;
+  const { syncFor } = await import("@/lib/syncFor");
+  const sync = syncFor(user);
+  for (const id of workoutIds) {
+    const op = await buildFinishedWorkoutOp(id);
+    if (op) await sync.enqueue(op);
+  }
   void sync.now({ force: true }).catch(() => {});
 }
 
@@ -209,6 +227,10 @@ async function applyEditedWorkout(
 ): Promise<boolean> {
   const { workout, sets, weights, exercises, editedAt } = payload;
   if (workout.userId !== userId) return false;
+  // The author recomputed progression from this workout because it was their
+  // latest. Here it may not be — a phone restored from the cloud has later
+  // workouts — and its weights would roll that progress back.
+  const moveWeights = weights.length > 0 && (await isLatestOfItsProgram(workout));
 
   let applied = false;
   await db.transaction(
@@ -225,11 +247,23 @@ async function applyEditedWorkout(
       await db.workouts.put({ ...workout, editedAt });
       await db.sets.where({ workoutId: workout.id }).delete();
       if (sets.length) await db.sets.bulkPut(sets);
-      for (const w of weights) await applyWeight(w);
+      if (moveWeights) for (const w of weights) await applyWeight(w);
       applied = true;
     },
   );
   return applied;
+}
+
+/** Is `workout` the last finished one in its program on this device? */
+async function isLatestOfItsProgram(workout: Workout): Promise<boolean> {
+  if (!workout.programDayId) return false;
+  const day = await db.programDays.get(workout.programDayId);
+  if (!day) return false;
+  const dayIds = new Set((await db.programDays.where({ programId: day.programId }).toArray()).map((d) => d.id));
+  const latest = (await db.workouts.where({ userId: workout.userId }).toArray())
+    .filter((w) => w.id !== workout.id && w.endTs !== undefined && w.programDayId && dayIds.has(w.programDayId))
+    .reduce((max, w) => Math.max(max, w.startTs ?? 0), 0);
+  return (workout.startTs ?? 0) >= latest;
 }
 
 async function applyDeleteWorkout(

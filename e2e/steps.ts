@@ -11,7 +11,7 @@ export async function createAccount(
   await page.goto("/");
   await page.getByRole("button", { name: "Create account" }).click();
   await page.getByRole("textbox", { name: "Your name" }).fill(name);
-  await page.getByRole("radio", { name: new RegExp(program) }).click();
+  await page.getByRole("button", { name: new RegExp(`^${program}`) }).click();
   await page.getByRole("button", { name: "Create with passkey" }).click();
   await expect(page.getByRole("heading", { name: "Add a recovery email" })).toBeVisible();
   if (recoveryEmail) {
@@ -38,9 +38,21 @@ export async function doWorkout(page: Page, sets = 5) {
   await page.getByRole("link", { name: /^Start / }).first().click();
   const pending = page.getByRole("button", { name: /^Set pending/ });
   for (let i = 0; i < sets; i++) await pending.first().click();
-  await page.getByRole("button", { name: "Finish workout" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Finish workout" }).click();
-  await expect(page).toHaveURL(/\/history/);
+  await finish(page);
+}
+
+/** Wait until this phone has nothing left to upload. ("Synced …" alone can
+ * be a stale success from before the latest change.) */
+export async function uploaded(page: Page) {
+  await page.reload(); // foregrounding is what pushes
+  await openSettings(page);
+  await expect(page.getByText("Everything on this device is uploaded.")).toBeVisible({ timeout: 30_000 });
+}
+
+/** The account's journal, as the server holds it. */
+export async function journal(page: Page): Promise<{ opId: string; kind: string }[]> {
+  const res = await page.request.get("/api/sync?since=0");
+  return ((await res.json()) as { ops: { opId: string; kind: string }[] }).ops;
 }
 
 export async function openSettings(page: Page) {

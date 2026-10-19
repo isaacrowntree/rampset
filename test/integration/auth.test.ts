@@ -71,7 +71,10 @@ describe("the Auth Durable Object", () => {
     await call("email-start", { email: "a@example.com" }, a.cookie);
     const [{ code }] = await sentCodes();
     expect((await call("email-verify", { email: "a@example.com", code }, a.cookie)).status).toBe(200);
-    expect((await call("email-start", { email: "A@example.com" }, b.cookie)).status).toBe(409);
+    // Someone else's email: the same answer as success, and no email sent —
+    // the UNIQUE constraint holds without telling B whose it is.
+    expect((await call("email-start", { email: "A@example.com" }, b.cookie)).status).toBe(200);
+    expect(await sentCodes()).toEqual([]);
 
     await call("recover-start", { email: "a@example.com" });
     const [recovery] = await sentCodes();
@@ -82,9 +85,15 @@ describe("the Auth Durable Object", () => {
     expect((await call("session", undefined, back.cookie)).status).toBe(200);
   });
 
-  it("deletes an account so its passkey no longer signs in", async () => {
+  // Real R2, a real SyncJournal: deleting an account must leave nothing of it.
+  it("deletes an account with its journal and backups, and its passkey stops working", async () => {
     const created = await signUp("Gone", "k-gone");
+    const user = created.body.account.id as string;
+    const data = (method: string) => SELF.fetch(`${ORIGIN}/data?user=${user}`, { method }).then((r) => r.json());
+    expect(await data("POST")).toEqual({ ops: 1, backups: 2 }); // latest + a snapshot
+
     expect((await call("delete-account", {}, created.cookie)).status).toBe(200);
+    expect(await data("GET")).toEqual({ ops: 0, backups: 0 });
     expect((await signIn("k-gone")).status).toBe(400);
   });
 });

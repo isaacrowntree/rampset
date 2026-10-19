@@ -35,6 +35,7 @@ jobs:
   # passkeys, sync, recovery email, and online / offline / flappy / slow.
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -50,4 +51,6 @@ jobs:
         if: failure()
         with:
           name: playwright-traces
-          path: test-results/
+          path: |
+            test-results/
+            playwright-report/

@@ -26,6 +26,8 @@ interface SetRow extends Row {
   workoutId?: string;
 }
 
+const editedAt = (w: Row) => (typeof w.editedAt === "number" ? w.editedAt : 0);
+
 export interface BackupData {
   format?: string;
   version?: number;
@@ -65,13 +67,26 @@ export function mergeBackups(
 ): BackupData {
   const dead = new Set(tombstonedWorkoutIds);
 
-  const workouts = unionById(existing?.workouts ?? [], incoming.workouts ?? []).filter(
-    (w) => !dead.has(w.id),
-  );
-  const live = new Set(workouts.map((w) => w.id));
-  const sets = unionById(existing?.sets ?? [], incoming.sets ?? []).filter(
-    (s) => s.workoutId === undefined || live.has(s.workoutId),
-  );
+  // Per workout, one side wins outright — the newer edit (incoming on a
+  // tie) — and brings its own sets. A set-by-set union would keep a set an
+  // edit removed, and let a phone that hasn't pulled an edit yet upload its
+  // old copy over the correction.
+  const before = new Map((existing?.workouts ?? []).map((w) => [w.id, w]));
+  const after = new Map((incoming.workouts ?? []).map((w) => [w.id, w]));
+  const from = new Map<string, "existing" | "incoming">();
+  for (const id of new Set([...before.keys(), ...after.keys()])) {
+    if (dead.has(id)) continue;
+    const e = before.get(id);
+    const i = after.get(id);
+    from.set(id, !i ? "existing" : !e ? "incoming" : editedAt(i) >= editedAt(e) ? "incoming" : "existing");
+  }
+  const workouts = [...from].map(([id, side]) => (side === "existing" ? before : after).get(id)!);
+  const setsOf = (side: "existing" | "incoming", sets: SetRow[]) =>
+    sets.filter((s) => s.workoutId !== undefined && from.get(s.workoutId) === side);
+  const sets = [
+    ...setsOf("existing", existing?.sets ?? []),
+    ...setsOf("incoming", incoming.sets ?? []),
+  ];
   const exercises = unionById(existing?.exercises ?? [], incoming.exercises ?? []);
 
   return { ...incoming, workouts, sets, exercises };
@@ -87,7 +102,9 @@ function sanitize(userId: string): string {
 
 export function backupKeys(userId: string, now: Date) {
   const who = sanitize(userId);
-  const stamp = now.toISOString().slice(0, 19).replaceAll(":", "-");
+  // One snapshot per hour, overwritten within it: a rollback point every
+  // hour is plenty, and anyone can sign up — uploads mustn't pile up forever.
+  const stamp = now.toISOString().slice(0, 13);
   return {
     // Dated snapshots live under snapshots/ so an R2 lifecycle rule can
     // expire them without ever touching the latest.json pointers.

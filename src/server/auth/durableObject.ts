@@ -9,14 +9,19 @@
 import { DurableObject } from "cloudflare:workers";
 import { AuthStore } from "./store";
 
+/** The store's public methods, by name — nothing inherited, nothing private. */
+const METHODS = new Set(
+  Object.getOwnPropertyNames(AuthStore.prototype).filter(
+    (name) => name !== "constructor" && name !== "rows",
+  ),
+);
+
 export class Auth extends DurableObject {
   private store = new AuthStore(this.ctx.storage.sql);
 
   run(method: string, args: unknown[]): unknown {
-    const fn = (AuthStore.prototype as unknown as Record<string, unknown>)[method];
-    if (method === "constructor" || typeof fn !== "function") {
-      throw new Error(`Unknown auth method: ${method}`);
-    }
-    return (fn as (...a: unknown[]) => unknown).apply(this.store, args);
+    if (!METHODS.has(method)) throw new Error(`Unknown auth method: ${method}`);
+    const fn = (this.store as unknown as Record<string, (...a: unknown[]) => unknown>)[method];
+    return fn.apply(this.store, args);
   }
 }

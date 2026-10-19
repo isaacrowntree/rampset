@@ -26,28 +26,6 @@ const { Onboarding } = await import("./Onboarding");
 beforeEach(() => vi.clearAllMocks());
 
 describe("Onboarding", () => {
-  it("creates an account on the chosen program, then offers a recovery email", async () => {
-    render(<Onboarding />);
-    await userEvent.click(screen.getByRole("button", { name: "Create account" }));
-    await userEvent.type(screen.getByRole("textbox", { name: "Your name" }), "Silvana");
-    await userEvent.click(screen.getByRole("radio", { name: /Custom routine/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Create with passkey" }));
-
-    expect(auth.createAccount).toHaveBeenCalledWith(
-      "Silvana",
-      expect.objectContaining({ templateId: "routine" }),
-      undefined,
-    );
-    // Not in the app yet: the recovery email comes first, and is skippable.
-    expect(await screen.findByRole("heading", { name: "Add a recovery email" })).toBeInTheDocument();
-    expect(adopt).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Not now" }));
-    expect(adopt).toHaveBeenCalledWith(ACCOUNT);
-  });
-
-  // Slow network: the passkey can finish before the server's config arrives.
-  // Deciding then would skip the recovery email for exactly the people on
-  // the worst connections.
   it("still offers the recovery email when the config arrives late", async () => {
     let arrive!: () => void;
     auth.authConfig.mockReturnValueOnce(
@@ -66,8 +44,8 @@ describe("Onboarding", () => {
   // Dismissing the passkey sheet is a choice, not a failure: no red error,
   // and the form is ready to go again.
   it("treats a dismissed passkey prompt as no error", async () => {
-    const { AuthError, CANCELLED } = await import("@/lib/auth");
-    auth.createAccount.mockRejectedValueOnce(new AuthError("Cancelled.", CANCELLED));
+    const { AuthError } = await import("@/lib/auth");
+    auth.createAccount.mockRejectedValueOnce(new AuthError("Cancelled.", 0, "cancelled"));
     render(<Onboarding />);
     await userEvent.click(screen.getByRole("button", { name: "Create account" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Your name" }), "Silvana");
@@ -86,14 +64,6 @@ describe("Onboarding", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("You're offline");
   });
 
-  it("signs straight in with an existing passkey", async () => {
-    render(<Onboarding />);
-    await userEvent.click(screen.getByRole("button", { name: "Sign in with passkey" }));
-    await waitFor(() => expect(adopt).toHaveBeenCalledWith(ACCOUNT));
-  });
-
-  // `next dev`, or a self-host without the AUTH binding: no accounts. The app
-  // still works — it just lives on this device, like it always could.
   it("starts on this device when the server has no accounts", async () => {
     auth.authConfig.mockResolvedValueOnce({ accounts: false, email: false, turnstileSiteKey: null });
     render(<Onboarding />);

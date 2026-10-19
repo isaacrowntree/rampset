@@ -27,7 +27,7 @@ test("a lifter who loses their phone gets back in by email, and the lost phone i
   // Back in — and asked to put a passkey on this phone for next time.
   await fresh.page.getByRole("button", { name: "Add passkey" }).click();
   await openSettings(fresh.page);
-  await expect(fresh.page.getByText(/^1 workout/)).toBeVisible();
+  await expect(fresh.page.getByText(/^\d+ workouts? · \d+ sets/)).toHaveText(/^1 workout/);
 
   // The new passkey works on its own.
   await signOut(fresh.page);
@@ -62,6 +62,25 @@ test("a recovery code can't be guessed past five tries", async ({ phone }) => {
   await code.fill(real);
   await stranger.page.getByRole("button", { name: "Continue" }).click();
   await expect(errorMessage(stranger.page)).toHaveText(/wrong or has expired/);
+});
+
+// The limiter is real under wrangler dev: one phone, one client IP, ten email
+// requests a minute.
+test("too many recovery attempts are slowed down, and the app says so", async ({ phone }) => {
+  const p = await phone();
+  await p.page.goto("/");
+  await p.page.getByRole("button", { name: /Recover by email/ }).click();
+  const email = inbox("flood");
+  for (let i = 0; i < 12; i++) {
+    await p.page.getByRole("textbox", { name: "Email" }).fill(email);
+    await p.page.getByRole("button", { name: "Send code" }).click();
+    const back = p.page.getByRole("button", { name: /^Resend, or use a different email/ });
+    const limited = errorMessage(p.page).filter({ hasText: /Too many attempts/ });
+    await expect(back.or(limited)).toBeVisible();
+    if (await limited.isVisible()) return;
+    await back.click();
+  }
+  throw new Error("never rate limited");
 });
 
 test("deleting an account removes it everywhere — its passkey no longer signs in", async ({ phone }) => {

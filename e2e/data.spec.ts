@@ -21,7 +21,7 @@ test("history comes across from StrongLifts", async ({ phone }) => {
   const confirm = p.page.getByRole("alertdialog");
   await expect(confirm).toContainText("3 workouts from StrongLifts");
   await confirm.getByRole("button", { name: "Import" }).click();
-  await expect(p.page.getByText(/^3 workouts/)).toBeVisible();
+  await expect(p.page.getByText(/^\d+ workouts? · \d+ sets/)).toHaveText(/^3 workout/);
 
   // Importing the same file again adds nothing.
   await p.page.getByLabel("Import from another app").setInputFiles({
@@ -31,7 +31,7 @@ test("history comes across from StrongLifts", async ({ phone }) => {
   });
   await p.page.getByRole("alertdialog").getByRole("button", { name: "Import" }).click();
   await expect(p.page.getByText(/already here, skipped/)).toBeVisible();
-  await expect(p.page.getByText(/^3 workouts/)).toBeVisible();
+  await expect(p.page.getByText(/^\d+ workouts? · \d+ sets/)).toHaveText(/^3 workout/);
 });
 
 test("a downloaded backup restores into a brand-new account", async ({ phone }) => {
@@ -52,7 +52,7 @@ test("a downloaded backup restores into a brand-new account", async ({ phone }) 
     buffer: readFileSync(file),
   });
   await fresh.page.getByRole("alertdialog").getByRole("button", { name: /Replace/ }).click();
-  await expect(fresh.page.getByText(/^1 workout/)).toBeVisible();
+  await expect(fresh.page.getByText(/^\d+ workouts? · \d+ sets/)).toHaveText(/^1 workout/);
   await fresh.page.getByRole("navigation").getByRole("link", { name: "History" }).click();
   await expect(fresh.page.getByText("Workout A").first()).toBeVisible();
 });

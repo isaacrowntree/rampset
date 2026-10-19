@@ -13,7 +13,7 @@ import {
   startRecovery,
 } from "@/lib/auth";
 import { Turnstile } from "./Turnstile";
-import { ERROR, FIELD, PRIMARY, SECONDARY } from "./ui";
+import { ERROR, FIELD, PRIMARY, SECONDARY } from "@/components/ui";
 
 export function EmailCodeForm({
   purpose,

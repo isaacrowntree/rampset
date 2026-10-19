@@ -174,11 +174,15 @@ describe("recovery email", () => {
     expect(verified.body.account.email).toBe("isaac@example.com");
   });
 
-  it("can't be another account's email", async () => {
+  // Open sign-up makes "is this email taken?" a question anyone could ask.
+  // Starting looks the same either way, and nothing reaches the owner's
+  // inbox; only proving you hold the email (the code) can claim it.
+  it("can't be another account's email — without saying whose it is", async () => {
     await withEmail("shared@example.com");
     const other = await signUp("Sam", "key-2");
     const res = await call("email-start", { body: { email: "shared@example.com" }, cookie: other.cookie });
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(0);
   });
 
   it("isn't offered when the server can't send email", async () => {
@@ -197,6 +201,32 @@ describe("recovering an account", () => {
     await call("email-verify", { body: { email: "isaac@example.com", code }, cookie: created.cookie });
     return created;
   }
+
+  // The lost phone may be in a thief's hands, still holding the passkey.
+  // Recovery has to take that key away too, not just its session.
+  it("revokes the lost phone's passkey, so it can't sign straight back in", async () => {
+    await accountWithEmail();
+    await call("recover-start", { body: { email: "isaac@example.com" } });
+    const { code } = sent.pop()!;
+    await call("recover-verify", { body: { email: "isaac@example.com", code } });
+
+    const options = await call("login-options", { body: {} });
+    const res = await call("login-verify", { body: { response: passkeyResponse("key-1", options.body.challenge) } });
+    expect(res.status).toBe(400);
+  });
+
+  // An account that exists costs an email send; one that doesn't, nothing.
+  // Timing alone would tell a stranger which is which — so the send happens
+  // after the answer.
+  it("answers before the email goes out", async () => {
+    await accountWithEmail();
+    const pending: Promise<unknown>[] = [];
+    deps.defer = (p) => void pending.push(p);
+    expect((await call("recover-start", { body: { email: "isaac@example.com" } })).status).toBe(200);
+    expect(sent).toHaveLength(0);
+    await Promise.all(pending);
+    expect(sent).toHaveLength(1);
+  });
 
   it("signs in with the emailed code — and signs the lost device out", async () => {
     const lost = await accountWithEmail();
@@ -259,12 +289,37 @@ describe("the profile", () => {
 });
 
 describe("deleting an account", () => {
+  // Another phone pushing mid-delete must not recreate what's being erased.
+  it("signs every device out before removing the data", async () => {
+    const { cookie } = await signUp();
+    let sessionDuringDelete = 0;
+    deps.deleteUserData = async () => {
+      sessionDuringDelete = (await call("session", { cookie })).status;
+    };
+    await call("delete-account", { body: {}, cookie });
+    expect(sessionDuringDelete).toBe(401);
+  });
+
   it("removes its data, then the account", async () => {
     const { cookie, body } = await signUp();
     const res = await call("delete-account", { body: {}, cookie });
     expect(res.status).toBe(200);
     expect(deps.deleteUserData).toHaveBeenCalledWith(body.account.id);
     expect((await call("session", { cookie })).status).toBe(401);
+  });
+});
+
+describe("registering a passkey that's already in use", () => {
+  it("fails without leaving an account behind", async () => {
+    await signUp("Isaac", "key-1");
+    const options = await call("register-options", { body: { name: "Copycat" } });
+    const res = await call("register-verify", {
+      body: { name: "Copycat", profile: PROFILE, response: passkeyResponse("key-1", options.body.challenge) },
+    });
+    expect(res.status).toBe(400);
+    // The one account still signs in with it.
+    const login = await call("login-options", { body: {} });
+    expect((await call("login-verify", { body: { response: passkeyResponse("key-1", login.body.challenge) } })).body.account.name).toBe("Isaac");
   });
 });
 

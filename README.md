@@ -110,8 +110,9 @@ Then, once deployed:
    recovery then ask for a Turnstile check.
 
 Sign-in and email routes are rate limited per client IP, and sync/backup per
-account (the `ratelimits` bindings). A push is capped at 100 ops and 1 MB, a
-backup at 10 MB.
+account (the `ratelimits` bindings). The journal takes a big backlog in batches
+of 100 ops / 1 MB; a backup is capped at 10 MB, with one rollback snapshot kept
+per hour.
 
 **What it costs:** Workers and Durable Objects are free at household scale, and
 there's no KV/cache to configure. The one paid gate is **R2** — the app's
@@ -126,6 +127,8 @@ you a complete file whenever you want.
 Everything is on the phone first. **Settings → Your data** downloads a full
 backup file, restores one (from any account — this is how you move to a new
 one), exports a CSV, and **imports your history from StrongLifts or Strong**.
+A phone from before accounts keeps its lifters' history untouched; **Settings →
+From before accounts** moves each one into an account when you're ready.
 Programs are templates in the repo (`src/lib/programTemplates.ts`); choose
 StrongLifts 5×5, Madcow, or a **custom routine** you build in the Program tab.
 

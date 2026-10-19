@@ -70,32 +70,25 @@ describe("Settings — account", () => {
     expect(auth.signOut).toHaveBeenCalled();
   });
 
-  it("deletes the account only after confirming", async () => {
+  // Offline, the server would keep the session alive, and the next online
+  // launch would quietly sign the lifter back in — on a phone they meant to
+  // leave clean.
+  it("won't sign out offline", async () => {
+    const { AuthError } = await import("@/lib/auth");
+    auth.signOut.mockRejectedValueOnce(new AuthError("You're offline — connect and try again."));
     render(<SettingsPage />);
-    await userEvent.click(await screen.findByRole("button", { name: "Delete account" }));
-    const sheet = await screen.findByRole("alertdialog");
-    expect(auth.deleteAccount).not.toHaveBeenCalled();
-    await userEvent.click(within(sheet).getByRole("button", { name: "Delete account" }));
-    await waitFor(() => expect(ctx.leave).toHaveBeenCalled());
-    expect(auth.deleteAccount).toHaveBeenCalled();
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Sign out" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/connect/i);
+    expect(ctx.leave).not.toHaveBeenCalled();
   });
 
-  it("switches the theme and saves it to the account", async () => {
+  it("warns that a workout in progress goes too", async () => {
+    await db.workouts.add({ id: "open", userId: "user-1", dayLabel: "Workout A", date: "2026-01-01", startTs: 1 });
+    localStorage.setItem("liftlog.activeWorkout.user-1", "open");
     render(<SettingsPage />);
-    await userEvent.click(await screen.findByRole("tab", { name: "Light" }));
-    expect(ctx.patchUser).toHaveBeenCalledWith({ theme: "light" });
-    await waitFor(() =>
-      expect(auth.updateProfile).toHaveBeenCalledWith({ profile: expect.objectContaining({ theme: "light" }) }),
-    );
-  });
-
-  // Offline-first: a skin is a local choice; the server catches up later.
-  it("switches the theme offline too, without an error", async () => {
-    auth.updateProfile.mockRejectedValueOnce(new Error("offline"));
-    render(<SettingsPage />);
-    await userEvent.click(await screen.findByRole("tab", { name: "Light" }));
-    expect(ctx.patchUser).toHaveBeenCalledWith({ theme: "light" });
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(/workout in progress/);
   });
 });
 
@@ -144,22 +137,30 @@ describe("Settings — a device-only account", () => {
   });
 });
 
-describe("Settings — your data", () => {
-  const SL = `Date (yyyy/mm/dd),Workout,Workout Name,Program Name,Body Weight (KG),Exercise,SetsxReps,SetsxTime,Top Set Reps x KG,e1RM  (KG),Reps,Volume (KG),Workout Volume (KG),Duration (hours),Start Time (h:mm),End Time (h:mm),Notes,Set 1 (Reps), Set 1 (KG)
-"2015/05/25","1","Workout A","","87","Squat","1x5","","5x20","24.7","5","100","","1","7:37 PM","8:37 PM","","5","20"
-"2015/05/27","2","Workout B","","87","Squat","1x5","","5x22.5","24.7","5","100","","1","7:37 PM","8:37 PM","","5","22.5"`;
-
-  // Import adds history and can't be undone with a tap, so it shows what it
-  // found before it writes anything.
-  it("imports a StrongLifts export after showing what it found", async () => {
-    render(<SettingsPage />);
-    await userEvent.upload(await screen.findByLabelText("Import from another app"), file("sl.csv", SL));
-    const sheet = await screen.findByRole("alertdialog");
-    expect(sheet).toHaveTextContent(/2 workouts from StrongLifts/);
-    expect(await db.workouts.where({ userId: "user-1" }).count()).toBe(0);
-    await userEvent.click(within(sheet).getByRole("button", { name: "Import" }));
-    await waitFor(async () => expect(await db.workouts.where({ userId: "user-1" }).count()).toBe(2));
+// A phone from before accounts keeps its lifters' history, untouched, until
+// someone moves it in.
+describe("Settings — data from before accounts", () => {
+  beforeEach(async () => {
+    ctx.user = { ...ME, id: "u_me" };
+    await db.workouts.add({ id: "old1", userId: "user-2", dayLabel: "Day 1", date: "2026-01-01", startTs: 1, endTs: 2 });
   });
+
+  it("moves an old profile's history into the account", async () => {
+    render(<SettingsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: /Lifter Two/ }));
+    await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: /Move/ }));
+    await waitFor(async () => expect(await db.workouts.get("old1")).toMatchObject({ userId: "u_me" }));
+    expect(await db.users.get("user-2")).toBeUndefined();
+  });
+
+  it("says signing out erases it too", async () => {
+    render(<SettingsPage />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(/from before accounts/);
+  });
+});
+
+describe("Settings — your data", () => {
 
   it("explains a file it can't read instead of importing it", async () => {
     render(<SettingsPage />);

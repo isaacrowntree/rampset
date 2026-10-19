@@ -47,6 +47,8 @@ export interface AuthDeps {
   rateLimit?: (key: string) => Promise<boolean>;
   /** Remove what the account owns outside auth: its journal and backups. */
   deleteUserData: (userId: string) => Promise<void>;
+  /** Finish work after the response (ctx.waitUntil). Absent = await inline. */
+  defer?: (work: Promise<unknown>) => void;
 }
 
 const RP_NAME = "Rampset";
@@ -115,7 +117,7 @@ const HANDLERS: Record<string, Handler> = {
       userID: new TextEncoder().encode(userId),
       attestationType: "none",
       // Discoverable, so signing in on a new phone needs no username.
-      authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
+      authenticatorSelection: { residentKey: "required", userVerification: "required" },
     });
     await deps.store.createChallenge(options.challenge, "register", userId, deps.now());
     return Response.json(options);
@@ -140,14 +142,16 @@ const HANDLERS: Record<string, Handler> = {
         expectedChallenge: challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
-        requireUserVerification: false,
+        requireUserVerification: true,
       })
       .catch(() => ({ verified: false as const }));
     if (!result.verified) fail(400, "Passkey couldn't be verified");
+    const { credential } = result.registrationInfo!;
+    // Checked before the account exists, so a refusal leaves nothing behind.
+    if (await deps.store.passkey(credential.id)) fail(400, "This passkey is already in use");
 
     const now = deps.now();
     const account = await deps.store.createAccount(userId, name, profile, now);
-    const { credential } = result.registrationInfo!;
     await deps.store.addPasskey(
       {
         id: credential.id,
@@ -168,7 +172,7 @@ const HANDLERS: Record<string, Handler> = {
     const { rpID } = relyingParty(req);
     const options = await deps.webauthn.generateAuthenticationOptions({
       rpID,
-      userVerification: "preferred",
+      userVerification: "required",
     });
     await deps.store.createChallenge(options.challenge, "login", null, deps.now());
     return Response.json(options);
@@ -201,7 +205,7 @@ const HANDLERS: Record<string, Handler> = {
           counter: key!.counter,
           transports: key!.transports,
         },
-        requireUserVerification: false,
+        requireUserVerification: true,
       })
       .catch(() => ({ verified: false as const, authenticationInfo: undefined }));
     if (!result.verified) fail(400, "Passkey couldn't be verified");
@@ -227,7 +231,7 @@ const HANDLERS: Record<string, Handler> = {
       userID: new TextEncoder().encode(userId),
       attestationType: "none",
       excludeCredentials: existing.map((k) => ({ id: k.id, transports: k.transports })),
-      authenticatorSelection: { residentKey: "required", userVerification: "preferred" },
+      authenticatorSelection: { residentKey: "required", userVerification: "required" },
     });
     await deps.store.createChallenge(options.challenge, "add-passkey", userId, deps.now());
     return Response.json(options);
@@ -249,12 +253,13 @@ const HANDLERS: Record<string, Handler> = {
         expectedChallenge: challenge,
         expectedOrigin: origin,
         expectedRPID: rpID,
-        requireUserVerification: false,
+        requireUserVerification: true,
       })
       .catch(() => ({ verified: false as const }));
     if (!result.verified) fail(400, "Passkey couldn't be verified");
 
     const { credential } = result.registrationInfo!;
+    if (await deps.store.passkey(credential.id)) fail(400, "This passkey is already in use");
     await deps.store.addPasskey(
       {
         id: credential.id,
@@ -277,10 +282,12 @@ const HANDLERS: Record<string, Handler> = {
     const email = parseEmail(body.email);
     await requireHuman(req, deps, body.turnstileToken);
 
-    // The same answer whether or not the email has an account: this endpoint
-    // must not tell a stranger who uses the app.
-    const account = await deps.store.accountByEmail(email);
-    if (account) {
+    // The same answer, in the same time, whether or not the email has an
+    // account: this endpoint must not tell a stranger who uses the app. So
+    // the lookup and the send happen after the response.
+    const work = (async () => {
+      const account = await deps.store.accountByEmail(email);
+      if (!account) return;
       const code = sixDigitCode();
       const issued = await deps.store.issueCode(
         email,
@@ -290,7 +297,9 @@ const HANDLERS: Record<string, Handler> = {
         deps.now(),
       );
       if (issued === "ok") await send(email, code, "recover");
-    }
+    })();
+    if (deps.defer) deps.defer(work.catch(() => {}));
+    else await work;
     return Response.json({ ok: true });
   },
 
@@ -307,9 +316,11 @@ const HANDLERS: Record<string, Handler> = {
     );
     if (!redeemed) fail(400, "That code is wrong or has expired");
 
-    // Recovering means a device was lost — possibly stolen. Sign the account
-    // out everywhere else.
+    // Recovering means a device was lost — possibly stolen, passkey and all.
+    // Sign the account out everywhere and take its passkeys away; the client
+    // adds a fresh one for this device next.
     await deps.store.deleteSessionsFor(redeemed!.userId);
+    await deps.store.deletePasskeysFor(redeemed!.userId);
     const account = (await deps.store.account(redeemed!.userId)) ?? fail(400, "Account not found");
     return signedIn(account, deps);
   },
@@ -322,8 +333,10 @@ const HANDLERS: Record<string, Handler> = {
     await limit(req, deps, "email");
     const email = parseEmail((await json<{ email?: unknown }>(req)).email);
 
+    // Someone else's email: answer as if sent, and send nothing. Open sign-up
+    // would otherwise make this a way to ask who uses the app.
     const owner = await deps.store.accountByEmail(email);
-    if (owner && owner.id !== userId) fail(409, "That email is already used by another account");
+    if (owner && owner.id !== userId) return Response.json({ ok: true });
 
     const code = sixDigitCode();
     const issued = await deps.store.issueCode(
@@ -374,7 +387,10 @@ const HANDLERS: Record<string, Handler> = {
 
   "POST delete-account": async (req, deps) => {
     const { userId } = await requireSession(req, deps);
-    // Data first: if that fails the account still exists to retry with.
+    // Every device out first, so nothing in flight recreates what's being
+    // erased. Then the data — if that fails, the account still exists to
+    // retry with (sign in again) — then the account.
+    await deps.store.deleteSessionsFor(userId);
     await deps.deleteUserData(userId);
     await deps.store.deleteAccount(userId);
     return Response.json({ ok: true }, { headers: { "set-cookie": clearedCookie(deps.dev) } });

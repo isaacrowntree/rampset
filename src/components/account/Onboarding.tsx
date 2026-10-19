@@ -4,12 +4,11 @@
  * recover by email. The app proper only appears once the device has an
  * account — `adopt` is the last step of every path. */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { newId } from "@/db/db";
 import type { Account } from "@/db/account";
 import {
   addPasskey,
-  ALREADY_REGISTERED,
   authConfig,
   authErrorMessage,
   AuthError,
@@ -23,7 +22,7 @@ import { useUser } from "@/state/UserContext";
 import { Chevron } from "@/components/Chevron";
 import { EmailCodeForm } from "./EmailCodeForm";
 import { Turnstile } from "./Turnstile";
-import { ERROR, FIELD, PRIMARY, SECONDARY } from "./ui";
+import { ERROR, FIELD, PRIMARY, SECONDARY } from "@/components/ui";
 
 /** The three ways to train. StrongLifts' variants (Plus, Lite…) are a switch
  * away in Settings; three choices is enough to start. */
@@ -93,7 +92,7 @@ export function Onboarding() {
             gets you back in. We only use it for that.
           </p>
           <EmailCodeForm purpose="add-email" onDone={(account) => void adopt(account)} />
-          <button className={`${SECONDARY} mt-1`} onClick={() => void adopt(step.account)}>
+          <button className="mt-1 min-h-[44px] py-3 text-[15px] text-ink-dim" onClick={() => void adopt(step.account)}>
             Not now
           </button>
         </Screen>
@@ -113,6 +112,10 @@ function Frame({ children }: { children: ReactNode }) {
 }
 
 function Screen({ title, onBack, children }: { title: string; onBack?: () => void; children: ReactNode }) {
+  // Each step replaces the page: move focus to its title, so a screen reader
+  // announces where the lifter has landed instead of falling to <body>.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => heading.current?.focus(), []);
   return (
     <Frame>
       <div className="flex h-11 items-center">
@@ -125,7 +128,9 @@ function Screen({ title, onBack, children }: { title: string; onBack?: () => voi
           </button>
         )}
       </div>
-      <h1 className="large-title mb-3 mt-2">{title}</h1>
+      <h1 ref={heading} tabIndex={-1} className="large-title mb-3 mt-2 outline-none">
+        {title}
+      </h1>
       {children}
     </Frame>
   );
@@ -171,8 +176,8 @@ function Welcome({
           Rampset<span className="text-accent">.</span>
         </h1>
         <p className="mt-2 text-[17px] leading-snug text-ink-dim">
-          The barbell log you own. Everything stays on this phone and works offline — your
-          account just keeps your devices in sync.
+          The barbell log you own. Everything stays on this phone and works offline once
+          you&apos;re set up — your account just keeps your devices in sync.
         </p>
       </div>
 
@@ -210,11 +215,16 @@ function Welcome({
             <button className={SECONDARY} disabled={!supported || busy} onClick={() => void signIn()}>
               {busy ? "Signing in…" : "Sign in with passkey"}
             </button>
-            {canRecover && (
-              <button className="min-h-[44px] py-3 text-[15px] text-ink-dim" onClick={onRecover}>
-                Lost your passkey? Recover by email
-              </button>
-            )}
+            {/* The slot is always there, so the buttons above don't jump when
+                the server's answer about email arrives. */}
+            <button
+              className={`min-h-[44px] py-3 text-[15px] text-ink-dim ${canRecover ? "" : "invisible"}`}
+              onClick={onRecover}
+              tabIndex={canRecover ? undefined : -1}
+              aria-hidden={canRecover ? undefined : true}
+            >
+              Lost your passkey? Recover by email
+            </button>
           </div>
         </>
       )}
@@ -299,7 +309,7 @@ function Create({
         <h2 id="program-label" className="eyebrow mb-2 px-4">
           How do you want to train?
         </h2>
-        <div role="radiogroup" aria-labelledby="program-label" className="glass mb-2 overflow-hidden">
+        <div role="group" aria-labelledby="program-label" className="glass mb-2 overflow-hidden">
           {STARTER_PROGRAMS.map((id) => {
             const t = getTemplate(id)!;
             const selected = templateId === id;
@@ -307,8 +317,7 @@ function Create({
               <button
                 key={id}
                 type="button"
-                role="radio"
-                aria-checked={selected}
+                aria-pressed={selected}
                 onClick={() => setTemplateId(id)}
                 className="flex w-full items-center gap-3 border-b border-line px-4 py-3.5 text-left last:border-b-0"
               >
@@ -338,6 +347,9 @@ function Create({
         <button type="submit" className={`${PRIMARY} mt-2`} disabled={busy || !name.trim() || (needsToken && !token)}>
           {local ? "Start" : busy ? "Creating…" : "Create with passkey"}
         </button>
+        {needsToken && !token && !busy && (
+          <p className="mt-2 text-center text-[13px] text-ink-faint">Checking your connection…</p>
+        )}
         {!local && (
           <p className="mt-3 px-4 text-center text-[13px] leading-snug text-ink-faint">
             Your phone saves a passkey for Rampset — Face ID or your fingerprint is your login. No
@@ -361,7 +373,7 @@ function AddPasskey({ onDone }: { onDone: () => void }) {
       onDone();
     } catch (e) {
       // A passkey this phone already has (a synced keychain) is the goal met.
-      if (e instanceof AuthError && e.status === ALREADY_REGISTERED) return onDone();
+      if (e instanceof AuthError && e.kind === "already-registered") return onDone();
       setError(authErrorMessage(e, "Couldn't add a passkey — try again."));
       setBusy(false);
     }

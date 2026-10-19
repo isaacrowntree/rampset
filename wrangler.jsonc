@@ -15,6 +15,10 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // One origin only. A workers.dev or preview URL would serve the same
+  // accounts under a second hostname — its own passkey scope and cookies.
+  "workers_dev": false,
+  "preview_urls": false,
   "routes": [
     {
       "pattern": "liftlog.zackdesign.biz",

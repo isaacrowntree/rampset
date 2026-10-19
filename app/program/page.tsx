@@ -13,7 +13,8 @@ import { Stepper } from "@/components/Stepper";
 import { fmtWeight } from "@/lib/weightDisplay";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
 import { addDay, deleteDay, moveExercise, renameDay } from "@/db/programEdit";
-import { FIELD } from "@/components/account/ui";
+import { getActiveWorkout } from "@/db/activeWorkout";
+import { FIELD } from "@/components/ui";
 import type {
   ProgramExercise,
   Exercise,
@@ -48,11 +49,12 @@ export default function ProgramPage() {
       detail.set(day.id, rows);
     }
     const allExercises = await db.exercises.where({ userId: user.id }).sortBy("name");
-    return { program, days, detail, allExercises };
+    const activeDayId = (await getActiveWorkout(user.id))?.programDayId;
+    return { program, days, detail, allExercises, activeDayId };
   }, [user?.id]);
 
   if (!user || !data) return <PageSkeleton title="Program" />;
-  const { program, days, detail, allExercises } = data;
+  const { program, days, detail, allExercises, activeDayId } = data;
   const isProgression = program.mode === "progression";
   // Only a custom routine is free-form: 5×5 and Madcow rotate through their
   // written days and progress by them.
@@ -213,7 +215,8 @@ export default function ProgramPage() {
         <DaySheet
           day={editingDay}
           exerciseCount={(detail.get(editingDay.id) ?? []).length}
-          canDelete={days.length > 1}
+          canDelete={days.length > 1 && editingDay.id !== activeDayId}
+          inProgress={editingDay.id === activeDayId}
           onRename={async (name) => {
             await renameDay(editingDay.id, name);
             onChanged();
@@ -380,16 +383,23 @@ function ProgramExerciseSheet({
             [-1, "Move up", position.index === 0],
             [1, "Move down", position.index === position.count - 1],
           ] as const).map(([dir, label, disabled]) => (
+            // aria-disabled, not disabled: reaching the end mustn't throw
+            // focus out of the button just pressed.
             <button
               key={label}
-              disabled={disabled}
-              onClick={() => void moveExercise(pe.id, dir).then(onChanged)}
-              className="glass py-3 text-[15px] text-accent disabled:text-ink-faint"
+              aria-disabled={disabled}
+              onClick={() => !disabled && void moveExercise(pe.id, dir).then(onChanged)}
+              className="glass py-3 text-[15px] text-accent aria-disabled:text-ink-faint"
             >
               {label}
             </button>
           ))}
         </div>
+      )}
+      {position && position.count > 1 && (
+        <p aria-live="polite" className="mt-2 px-1 text-[12px] text-ink-faint">
+          {position.index + 1} of {position.count} in this day
+        </p>
       )}
 
       <button
@@ -398,7 +408,7 @@ function ProgramExerciseSheet({
           else setConfirmRemove(true);
         }}
         className={`mt-5 w-full rounded-full py-3.5 text-[15px] font-semibold ${
-          confirmRemove ? "bg-plate-25 text-white" : "glass text-plate-25"
+          confirmRemove ? "bg-plate-25 text-black" : "glass text-danger"
         }`}
       >
         {confirmRemove ? `Remove ${ex.name} — tap to confirm` : "Remove from program"}
@@ -566,7 +576,7 @@ function AddExerciseSheet({
 
       <p className="eyebrow mb-1.5">Create new</p>
       <input
-        className="mb-2 w-full rounded-[12px] bg-fill px-4 py-3 text-base text-ink placeholder:text-ink-faint"
+        className={`${FIELD} mb-2`}
         autoComplete="off"
         autoCorrect="off"
         enterKeyHint="done"
@@ -649,14 +659,16 @@ function DaySheet({
   day,
   exerciseCount,
   canDelete,
+  inProgress,
   onRename,
   onDelete,
   onClose,
 }: {
   day: ProgramDay;
   exerciseCount: number;
-  /** A routine keeps at least one day. */
+  /** A routine keeps at least one day, and a day with a workout open stays. */
   canDelete: boolean;
+  inProgress: boolean;
   onRename: (name: string) => Promise<void>;
   onDelete: () => Promise<void>;
   onClose: () => void;
@@ -687,12 +699,20 @@ function DaySheet({
         onKeyDown={(e) => e.key === "Enter" && void done()}
         data-selectable
       />
-      <p className="mt-2 px-1 text-[12px] text-ink-faint">
-        {exerciseCount
-          ? `Deleting it takes its ${exerciseCount} exercise${exerciseCount === 1 ? "" : "s"} out of the program. `
-          : ""}
-        Past workouts and their history stay as they were.
-      </p>
+      {inProgress ? (
+        <p className="mt-2 px-1 text-[12px] text-ink-faint">
+          This day has a workout in progress — finish or discard it to delete the day.
+        </p>
+      ) : (
+        canDelete && (
+          <p className="mt-2 px-1 text-[12px] text-ink-faint">
+            {exerciseCount
+              ? `Deleting it takes its ${exerciseCount} exercise${exerciseCount === 1 ? "" : "s"} out of the program. `
+              : ""}
+            Past workouts and their history stay as they were.
+          </p>
+        )
+      )}
       {canDelete && (
         <button
           onClick={() => {
@@ -700,7 +720,7 @@ function DaySheet({
             else setConfirmDelete(true);
           }}
           className={`mt-5 w-full rounded-full py-3.5 text-[15px] font-semibold ${
-            confirmDelete ? "bg-plate-25 text-white" : "glass text-plate-25"
+            confirmDelete ? "bg-plate-25 text-black" : "glass text-danger"
           }`}
         >
           {confirmDelete ? `Delete ${day.name} — tap to confirm` : "Delete day"}

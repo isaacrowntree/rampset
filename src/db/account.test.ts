@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "./db";
-import { adoptAccount, type Account } from "./account";
+import { adoptAccount, legacyProfiles, localUser, moveLegacyProfile, type Account } from "./account";
 
 const ACCOUNT: Account = {
   id: "u_me",
@@ -39,5 +39,46 @@ describe("adoptAccount", () => {
     await adoptAccount({ ...ACCOUNT, name: "Isaac R" });
     expect((await db.users.get("u_me"))?.name).toBe("Isaac R");
     expect((await db.programExercises.get("pe-day-5x5-a-u_me-0"))?.workingWeightKg).toBe(100);
+  });
+});
+
+/** A phone from before accounts: the household's lifters, seeded from config
+ * under ids like user-1 and user-2, each with history. */
+describe("a device from before accounts", () => {
+  beforeEach(async () => {
+    const { seedIfEmpty } = await import("@/test/seed");
+    await seedIfEmpty();
+    // Workout ids are random — they never embed their owner.
+    await db.workouts.add({ id: "wk1", userId: "user-1", dayLabel: "Day", date: "2026-01-01", startTs: 1, endTs: 2 });
+    await db.workouts.add({ id: "wk2", userId: "user-2", dayLabel: "Day", date: "2026-01-01", startTs: 1, endTs: 2 });
+  });
+
+  // Not this device's account — so onboarding shows, rather than a signed-out
+  // state no passkey can ever get out of.
+  it("has no account of its own until one is adopted", async () => {
+    expect(await localUser()).toBeNull();
+    await adoptAccount(ACCOUNT);
+    expect((await localUser())?.id).toBe("u_me");
+  });
+
+  it("lists the old profiles and what they hold", async () => {
+    expect(await legacyProfiles()).toEqual([
+      expect.objectContaining({ id: "user-1", name: "Lifter One", workouts: 1 }),
+      expect.objectContaining({ id: "user-2", name: "Lifter Two", workouts: 1 }),
+    ]);
+  });
+
+  // Moving one lifter's history must not touch the other's: on a shared
+  // phone, that's someone else's data.
+  it("moves one old profile's history into the account, leaving the other", async () => {
+    await adoptAccount(ACCOUNT);
+    const moved = await moveLegacyProfile("user-1", "u_me");
+    expect(moved.workoutIds).toEqual(["wk1"]);
+    expect(await db.workouts.get("wk1")).toMatchObject({ userId: "u_me" });
+    expect(await db.exercises.get("ex-u_me-squat")).toBeDefined();
+    expect(await db.users.get("user-1")).toBeUndefined();
+    expect(await db.exercises.where({ userId: "user-1" }).count()).toBe(0);
+    expect((await legacyProfiles()).map((p) => p.id)).toEqual(["user-2"]);
+    expect(await db.workouts.get("wk2")).toMatchObject({ userId: "user-2" });
   });
 });

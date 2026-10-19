@@ -33,7 +33,10 @@ test("Silvana builds her own routine, and it follows her to her other phone", as
   await expect(p.page.getByRole("listitem").first()).toContainText("Bulgarian split squat");
 
   // The program travels by the cloud backup, which follows edits within seconds.
-  await p.page.waitForTimeout(6_000);
+  await p.page.waitForResponse(
+    (r) => r.url().endsWith("/api/backup") && r.request().method() === "POST" && r.ok(),
+    { timeout: 15_000 },
+  );
   const other = await phone();
   await p.sharePasskeysWith(other);
   await signInWithPasskey(other.page);

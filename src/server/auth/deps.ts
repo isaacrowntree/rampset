@@ -3,8 +3,8 @@
  * of them and grows features as they're added. */
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { journalFor } from "@/server/journal";
-import { deleteBackups, type BackupBucket } from "@/server/backupStore";
+import type { BackupBucket } from "@/server/backupStore";
+import { deleteUserData, type UserDataEnv } from "./userData";
 import { realWebAuthn, type AuthDeps } from "./handlers";
 import { sameOrigin, sessionUser } from "./session";
 import { authStoreFrom, type AuthApi, type AuthNamespace } from "./stub";
@@ -64,10 +64,8 @@ export function authDeps(): AuthDeps | null {
         ? { siteKey: e.TURNSTILE_SITE_KEY, verify: turnstileVerifier(e.TURNSTILE_SECRET_KEY) }
         : undefined,
     rateLimit: e.AUTH_LIMITER ? limiter(e.AUTH_LIMITER) : undefined,
-    deleteUserData: async (userId) => {
-      await journalFor(userId)?.reset();
-      if (e.BACKUPS) await deleteBackups(e.BACKUPS, userId);
-    },
+    defer: (work) => getCloudflareContext().ctx.waitUntil(work),
+    deleteUserData: (userId) => deleteUserData(e as UserDataEnv, userId),
   };
 }
 

@@ -15,7 +15,9 @@ import {
   startNext,
 } from "./steps";
 
-for (const network of ["online", "offline", "flappy"] as const) {
+// Logging never touches the network; offline proves the app still opens and
+// navigates from the service worker's cache while doing it.
+for (const network of ["online", "offline"] as const) {
   test(`StrongLifts (${network}): a clean session adds weight, a missed rep holds it`, async ({ phone }) => {
     const p = await phone();
     await createAccount(p.page, "Isaac");
@@ -80,7 +82,7 @@ test("an empty workout is thrown away; a started one asks before discarding", as
   await expect(p.page.getByRole("link", { name: /Resume/ })).toHaveCount(0);
 
   await openSettings(p.page);
-  await expect(p.page.getByText(/^0 workouts/)).toBeVisible();
+  await expect(p.page.getByText(/^\d+ workouts? · \d+ sets/)).toHaveText(/^0 workout/);
 });
 
 test("correcting history: a past workout's reps and note can be fixed from History", async ({ phone }) => {
@@ -115,7 +117,10 @@ test("Madcow: Monday's volume day hands over to Wednesday's light day", async ({
   await createAccount(p.page, "Isaac", "Madcow 5×5");
   await startNext(p.page);
   const sets = p.page.getByRole("button", { name: /^Log / });
-  while ((await sets.count()) > 0) await sets.first().click();
+  // Monday is three ramped lifts: bounded, so a set that won't log fails
+  // the test instead of spinning.
+  for (let i = 0; i < 30 && (await sets.count()) > 0; i++) await sets.first().click();
+  await expect(sets).toHaveCount(0);
   await finish(p.page);
   await p.page.getByRole("navigation").getByRole("link", { name: "Home" }).click();
   await expect(p.page.getByRole("link", { name: /^Start Wednesday/ }).first()).toBeVisible();

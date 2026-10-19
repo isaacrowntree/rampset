@@ -12,6 +12,29 @@ import type { Phone } from "./fixtures";
 
 export type Network = "online" | "offline" | "flappy" | "slow";
 
+/** Every request waits this long: high latency, fixed so a failure replays. */
+const SLOW_MS = 1500;
+
+/** The server applies a push, and the reply never makes it back — the case
+ * that tests idempotency, not whether a push happened to start. Drops the
+ * first `n` replies to POST /api/sync. */
+export async function loseSyncReplies(phone: Phone, n: number): Promise<void> {
+  let lost = 0;
+  await phone.context.route("**/api/sync", async (route) => {
+    if (route.request().method() === "POST" && lost < n) {
+      lost++;
+      await route.fetch(); // it reaches the journal…
+      return route.abort("connectionreset"); // …the answer doesn't reach the phone
+    }
+    return route.continue();
+  });
+}
+
+/** Only the journal can deliver: no cloud snapshot on this phone. */
+export async function withoutCloudRestore(phone: Phone): Promise<void> {
+  await phone.context.route("**/api/backup", (route) => route.fulfill({ status: 404, json: { error: "blocked" } }));
+}
+
 /** The app has been opened online once: its service worker is installed,
  * has cached the shell and every page's assets, and controls the page. Only
  * then is the network fair game — a phone in the gym got here at home. */
@@ -58,7 +81,7 @@ export async function useNetwork(phone: Phone, network: Network): Promise<() => 
     case "slow": {
       // ~3G at its worst: every request waits, then trickles.
       await context.route("**/*", async (route) => {
-        await new Promise((r) => setTimeout(r, 1200 + Math.random() * 800));
+        await new Promise((r) => setTimeout(r, SLOW_MS));
         await route.continue().catch(() => {});
       });
       return () => context.unrouteAll({ behavior: "ignoreErrors" });

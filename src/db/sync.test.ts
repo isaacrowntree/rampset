@@ -7,6 +7,7 @@ import { startWorkout, logSet, finishWorkout } from "./session";
 import {
   buildFinishedWorkoutOp,
   buildEditedWorkoutOp,
+  enqueueWorkouts,
   applyOp,
   deleteWorkoutOpId,
 } from "./sync";
@@ -104,6 +105,18 @@ async function editOp(workoutId: string, reps: number, editedAt: number) {
   };
 }
 
+// Imports, file restores and moved profiles land on one phone. Without ops,
+// a phone that already has history never sees them.
+describe("enqueueWorkouts", () => {
+  it("queues every finished workout given, and nothing unfinished", async () => {
+    const done = await finishRealWorkout();
+    await db.workouts.add({ id: "open", userId: USER1, dayLabel: "A", date: "2026-01-02", startTs: 5 });
+    await enqueueWorkouts(USER1, [done, "open"]);
+    const queued = await db.outbox.where({ userId: USER1 }).toArray();
+    expect(queued.map((r) => r.opId)).toEqual([done]);
+  });
+});
+
 describe("editedWorkout op", () => {
   it("replaces the workout's sets on a phone that already has it", async () => {
     const workoutId = await finishRealWorkout();
@@ -147,6 +160,21 @@ describe("editedWorkout op", () => {
     expect(await applyOp(USER1, edit)).toBe(true);
     expect(await applyOp(USER1, original)).toBe(false);
     expect((await db.sets.where({ workoutId }).toArray()).map((s) => s.reps)).toEqual([3, 3, 3, 3, 3]);
+  });
+
+  // A phone restored from the cloud replays an old edit whose weights predate
+  // workouts it already has. Applying them would roll that progress back.
+  it("doesn't move weights when the edited workout isn't the latest here", async () => {
+    const workoutId = await finishRealWorkout();
+    const edit = (await buildEditedWorkoutOp(workoutId, 1000, true))!;
+    const pe = (await db.programExercises.where({ programDayId: "day-5x5-b-user-1" }).sortBy("position"))[0];
+    await db.workouts.add({
+      id: "later", userId: USER1, dayLabel: "Workout B", date: "2099-01-01",
+      programDayId: "day-5x5-b-user-1", startTs: Date.now() + 1, endTs: Date.now() + 2,
+    });
+    await db.programExercises.update(pe.id, { workingWeightKg: 99 });
+    await applyOp(USER1, edit);
+    expect((await db.programExercises.get(pe.id))?.workingWeightKg).toBe(99);
   });
 
   it("moves working weights only when the author's edit recomputed them", async () => {

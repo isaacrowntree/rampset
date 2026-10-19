@@ -48,6 +48,9 @@ export const CODE_MAX_ATTEMPTS = 5;
 /** Codes issued per email per hour — a cap on how often we'll email anyone,
  * whoever is asking. */
 export const CODES_PER_HOUR = 5;
+/** Wrong guesses per email per day, across every code issued to it. Past
+ * this, the email can't be used to recover for a day. */
+export const MAX_CODE_FAILURES = 10;
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -93,6 +96,11 @@ const SCHEMA = [
     at INTEGER NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS code_log_email ON code_log(email, at)`,
+  `CREATE TABLE IF NOT EXISTS code_failures (
+    email TEXT NOT NULL,
+    at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS code_failures_email ON code_failures(email, at)`,
 ];
 
 interface UserRow {
@@ -201,7 +209,10 @@ export class AuthStore {
     this.sql.exec(`DELETE FROM sessions WHERE user_id = ?`, id);
     this.sql.exec(`DELETE FROM codes WHERE user_id = ?`, id);
     this.sql.exec(`DELETE FROM challenges WHERE user_id = ?`, id);
-    if (email) this.sql.exec(`DELETE FROM code_log WHERE email = ?`, email);
+    if (email) {
+      this.sql.exec(`DELETE FROM code_log WHERE email = ?`, email);
+      this.sql.exec(`DELETE FROM code_failures WHERE email = ?`, email);
+    }
     this.sql.exec(`DELETE FROM users WHERE id = ?`, id);
   }
 
@@ -232,6 +243,11 @@ export class AuthStore {
       `SELECT id, user_id, public_key, counter, transports FROM passkeys WHERE user_id = ?`,
       userId,
     ).map(toPasskey);
+  }
+
+  /** Recovery: the lost device may be in someone else's hands, passkey and all. */
+  deletePasskeysFor(userId: string): void {
+    this.sql.exec(`DELETE FROM passkeys WHERE user_id = ?`, userId);
   }
 
   setPasskeyCounter(id: string, counter: number): void {
@@ -319,7 +335,9 @@ export class AuthStore {
   }
 
   /** Check a code. Success burns it; every failure counts, and the code dies
-   * at CODE_MAX_ATTEMPTS — six digits survive five guesses, not a million. */
+   * at CODE_MAX_ATTEMPTS — six digits survive five guesses, not a million.
+   * Failures also count against the email across codes (MAX_CODE_FAILURES a
+   * day), or reissuing would make the cap meaningless. */
   redeemCode(
     email: string,
     purpose: CodePurpose,
@@ -327,6 +345,12 @@ export class AuthStore {
     now: number,
   ): { userId: string } | null {
     const normalized = normalizeEmail(email);
+    this.sql.exec(`DELETE FROM code_failures WHERE at <= ?`, now - DAY);
+    const [{ failures }] = this.rows<{ failures: number }>(
+      `SELECT COUNT(*) AS failures FROM code_failures WHERE email = ?`,
+      normalized,
+    );
+    if (failures >= MAX_CODE_FAILURES) return null;
     const [row] = this.rows<{ user_id: string; code_hash: string; expires_at: number; attempts: number }>(
         `SELECT user_id, code_hash, expires_at, attempts FROM codes WHERE email = ? AND purpose = ?`,
         normalized,
@@ -338,6 +362,7 @@ export class AuthStore {
       return null;
     }
     if (row.code_hash !== codeHash) {
+      this.sql.exec(`INSERT INTO code_failures (email, at) VALUES (?, ?)`, normalized, now);
       this.sql.exec(
         `UPDATE codes SET attempts = attempts + 1 WHERE email = ? AND purpose = ?`,
         normalized,

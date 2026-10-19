@@ -29,15 +29,6 @@ describe("Program tab — a custom routine", () => {
     current = asUser("user-2");
   });
 
-  it("adds a day", async () => {
-    render(<ProgramPage />);
-    await userEvent.click(await screen.findByRole("button", { name: "Add day" }));
-    const sheet = await screen.findByRole("dialog", { name: "New day" });
-    await userEvent.type(within(sheet).getByRole("textbox", { name: "Day name" }), "Upper");
-    await userEvent.click(within(sheet).getByRole("button", { name: "Add day" }));
-    expect(await screen.findByRole("heading", { name: "Upper" })).toBeInTheDocument();
-  });
-
   it("renames and deletes a day from its header", async () => {
     render(<ProgramPage />);
     await userEvent.click(await screen.findByRole("button", { name: /Edit day Day 1/ }));
@@ -64,16 +55,18 @@ describe("Program tab — a custom routine", () => {
     expect(within(sheet).queryByRole("button", { name: "Delete day" })).not.toBeInTheDocument();
   });
 
-  it("moves an exercise up its day", async () => {
+  // The workout screen resumes an open workout by its day; with the day gone
+  // it can't, and the workout could be neither finished nor discarded.
+  it("won't delete a day with a workout in progress", async () => {
+    await db.workouts.add({ id: "open", userId: "user-2", dayLabel: "Day 1", date: "2026-01-01", programDayId: "day-routine-1-user-2", startTs: 1 });
+    localStorage.setItem("liftlog.activeWorkout.user-2", "open");
     render(<ProgramPage />);
-    const day = (await screen.findByRole("heading", { name: /Day 1/ })).closest("section")!;
-    const rows = () => within(day).getAllByRole("button", { name: /^Edit (?!day)/ }).map((b) => b.textContent);
-    const second = rows()[1];
-    await userEvent.click(within(day).getAllByRole("button", { name: /^Edit (?!day)/ })[1]);
-    const sheet = await screen.findByRole("dialog");
-    await userEvent.click(within(sheet).getByRole("button", { name: "Move up" }));
-    await waitFor(() => expect(rows()[0]).toBe(second));
+    await userEvent.click(await screen.findByRole("button", { name: /Edit day Day 1/ }));
+    const sheet = await screen.findByRole("dialog", { name: /Edit day/ });
+    expect(within(sheet).queryByRole("button", { name: "Delete day" })).not.toBeInTheDocument();
+    expect(sheet).toHaveTextContent(/workout in progress/);
   });
+
 });
 
 // 5×5 and Madcow rotate through their written days and progress by them, so

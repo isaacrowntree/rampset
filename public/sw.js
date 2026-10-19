@@ -2,7 +2,7 @@
  * cache-first for static assets. The data layer lives in IndexedDB, so the
  * shell is all we need to make the app open in a gym dead zone. */
 
-const CACHE = "rampset-shell-v7";
+const CACHE = "rampset-shell-v8";
 /** The shell must cache or offline is broken — fail install if it can't. */
 const CORE = ["/", "/manifest.webmanifest", "/icon.svg"];
 /** Every tab's document, so a COLD offline navigation (e.g. tapping History
@@ -25,9 +25,24 @@ function timeout(ms) {
 async function cacheAssetsOf(cache, page) {
   const html = await page.clone().text();
   const assets = new Set([...html.matchAll(/(?:src|href)="(\/_next\/static\/[^"]+)"/g)].map((m) => m[1]));
-  await Promise.allSettled(
+  const results = await Promise.allSettled(
     [...assets].map(async (url) => (await cache.match(url)) ?? cache.add(url)),
   );
+  if (results.some((r) => r.status === "rejected")) throw new Error("assets incomplete");
+}
+
+/** Pages are kept by path alone. They're client-rendered shells that read
+ * their own query, so `/workout?day=A` and `/workout?edit=…` are one page —
+ * stored once, always the newest build of it. */
+function pageKey(url) {
+  return new Request(new URL(url).pathname);
+}
+
+/** Store a page only once all its assets are stored: a page cached ahead of
+ * its chunks would load offline and then fail on them. */
+async function cachePage(cache, key, page) {
+  await cacheAssetsOf(cache, page);
+  await cache.put(key, page);
 }
 
 self.addEventListener("install", (event) => {
@@ -37,11 +52,14 @@ self.addEventListener("install", (event) => {
       await cache.addAll(CORE);
       // Routes are best-effort: a single unreachable page must not block the
       // install, and they refresh on every online navigation anyway.
-      await Promise.allSettled(ROUTES.map((r) => cache.add(r)));
-      for (const route of [...CORE.slice(0, 1), ...ROUTES]) {
-        const page = await cache.match(route);
-        if (page) await cacheAssetsOf(cache, page).catch(() => {});
-      }
+      await Promise.allSettled(
+        ROUTES.map(async (route) => {
+          const page = await fetch(route);
+          if (page.ok && !page.redirected) await cachePage(cache, pageKey(page.url), page);
+        }),
+      );
+      const shell = await cache.match("/");
+      if (shell) await cacheAssetsOf(cache, shell).catch(() => {});
       await self.skipWaiting();
     }),
   );
@@ -66,27 +84,24 @@ self.addEventListener("fetch", (event) => {
     // Network-first so deploys land; cached shell when offline OR when the
     // network stalls past the timeout. Only cache successful responses —
     // a cached 500 would poison the offline shell.
-    const network = fetch(request).then((res) => {
-      // Cache only healthy same-origin responses. Behind Cloudflare
-      // Access, an expired session redirects to the login page with a
-      // 200 — caching that would poison the offline shell.
-      if (res.ok && !res.redirected && res.url.startsWith(location.origin)) {
-        const copy = res.clone();
-        // A deploy changes the chunk hashes: keep the new ones with the page.
-        caches.open(CACHE).then((cache) =>
-          cache.put(request, copy.clone()).then(() => cacheAssetsOf(cache, copy)),
-        );
-      }
-      return res;
-    });
+    const network = fetch(request);
     // Keep the slow fetch alive after we've answered from cache — when it
-    // eventually lands it still refreshes the shell for next time.
-    event.waitUntil(network.catch(() => {}));
-    // ignoreSearch: the pages are client-rendered shells that read their own
-    // query, and `/workout?day=…` must find the cached `/workout` — or a cold
+    // eventually lands it still refreshes the page (and, after a deploy, its
+    // new chunks) for next time. Only healthy same-origin pages are kept: a
+    // cached 500 or redirect would poison the offline shell.
+    event.waitUntil(
+      network
+        .then(async (res) => {
+          if (!res.ok || res.redirected || !res.url.startsWith(location.origin)) return;
+          // Clone now, before the page starts reading the body.
+          const copy = res.clone();
+          await cachePage(await caches.open(CACHE), pageKey(request.url), copy);
+        })
+        .catch(() => {}),
+    );
+    // By path: `/workout?day=…` must find the cached `/workout`, or a cold
     // offline launch can't start a workout.
-    const cached = () =>
-      caches.match(request, { ignoreSearch: true }).then((hit) => hit ?? caches.match("/"));
+    const cached = () => caches.match(pageKey(request.url)).then((hit) => hit ?? caches.match("/"));
     event.respondWith(
       Promise.race([network, timeout(NETWORK_TIMEOUT_MS)])
         .then((res) =>

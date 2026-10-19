@@ -12,6 +12,8 @@ export interface ImportSummary {
   workoutsSkipped: number;
   setsAdded: number;
   exercisesCreated: string[];
+  /** What was added — for syncing to the account's other phones. */
+  workoutIds: string[];
 }
 
 export async function importIntoStore(
@@ -23,6 +25,7 @@ export async function importIntoStore(
     workoutsSkipped: 0,
     setsAdded: 0,
     exercisesCreated: [],
+    workoutIds: [],
   };
 
   const existing = await db.exercises.where({ userId }).toArray();
@@ -70,6 +73,7 @@ export async function importIntoStore(
     };
     workouts.push(workout);
     summary.workoutsAdded++;
+    summary.workoutIds.push(workout.id);
 
     for (const ie of iw.exercises) {
       const key = ie.name.toLowerCase();
