@@ -4,13 +4,13 @@
  * passkey cryptography (a fake that still round-trips the stored public key —
  * see below) and the email provider (codes are kept for the test to read). */
 import { SyncJournal } from "durable-sync/server";
-import { Auth } from "../../src/server/auth/durableObject";
+import { AuthDurableObject, createAuth, type AuthNamespace, type WebAuthn } from "durable-auth/server";
+import { parseProfile } from "../../src/server/auth/parseProfile";
 import { deleteUserData } from "../../src/server/auth/userData";
 import { storeBackup } from "../../src/server/backupStore";
-import { handleAuth, type WebAuthn } from "../../src/server/auth/handlers";
-import { authStoreFrom, type AuthNamespace } from "../../src/server/auth/stub";
 
-export { Auth, SyncJournal };
+export class Auth extends AuthDurableObject {}
+export { SyncJournal };
 
 interface Env {
   AUTH: AuthNamespace;
@@ -65,14 +65,19 @@ const worker = {
       const objects = (await env.BACKUPS.list()).objects.filter((o) => o.key.includes(user));
       return Response.json({ ops: ops.length, backups: objects.length });
     }
-    return handleAuth(url.pathname.split("/").pop()!, req, {
-      store: authStoreFrom(env.AUTH),
-      now: Date.now,
-      dev: false,
+    // Rampset's own choices (profile validation, paths, cookie) on the real
+    // library and the real Durable Object.
+    const auth = createAuth({
+      store: env.AUTH,
+      rpName: "Rampset",
+      basePath: "/api/auth",
+      cookieName: "rampset_session",
+      parseProfile,
       webauthn,
       sendCode: async (to, code) => void sent.push({ to, code }),
-      deleteUserData: (userId) => deleteUserData(env as never, userId),
+      onDeleteAccount: (userId) => deleteUserData(env as never, userId),
     });
+    return (await auth.handle(req)) ?? new Response("Not found", { status: 404 });
   },
 };
 
