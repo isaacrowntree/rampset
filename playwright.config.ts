@@ -7,7 +7,8 @@
  * authenticator (see e2e/fixtures.ts). Nothing is mocked. */
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = 8788;
+// E2E_PORT: run beside another wrangler dev that already holds the default.
+const PORT = Number(process.env.E2E_PORT ?? 8788);
 
 export default defineConfig({
   testDir: "e2e",

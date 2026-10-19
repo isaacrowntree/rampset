@@ -138,7 +138,8 @@ StrongLifts 5×5, Madcow, or a **custom routine** you build in the Program tab.
 - **IndexedDB (Dexie)** is the on-device source of truth — fully functional
   offline. Cross-device **sync** (a per-account SQLite Durable Object that
   orders each account's ops, via [durable-sync](https://github.com/isaacrowntree/durable-sync)),
-  **accounts** (passkeys + email recovery in an Auth Durable Object), and
+  **accounts** (passkeys + email recovery in an Auth Durable Object, via
+  [durable-auth](https://github.com/isaacrowntree/durable-auth)), and
   **backups** (R2 snapshots) via Cloudflare Workers.
 - **Engines** are pure, unit-tested functions in `src/lib/`: linear progression
   + deload, Madcow ramps, routine prefill, plate-per-side math, Epley e1RM,
@@ -146,6 +147,20 @@ StrongLifts 5×5, Madcow, or a **custom routine** you build in the Program tab.
 - **PWA**: manifest + service worker (network-first shell, offline fallback),
   installable to the home screen.
 - **Design**: OLED black + IWF plate palette, per-user light/dark skins.
+
+## Related
+
+Rampset is one of three open-source pieces that fit together, each usable on
+its own:
+
+- **[durable-sync](https://isaacrowntree.com/durable-sync/)** — its offline-first
+  sync: an op log in a Durable Object and an outbox on the phone.
+- **[durable-auth](https://isaacrowntree.com/durable-auth/)** — its passkey
+  sign-in: accounts, sessions and email recovery in one Durable Object.
+
+Write-ups: [Rampset](https://zackdesign.biz/rampset/) ·
+[durable-sync](https://zackdesign.biz/durable-sync/) ·
+[durable-auth](https://zackdesign.biz/durable-auth/).
 
 ## Contributing & making it yours
 
