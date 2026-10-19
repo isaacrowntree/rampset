@@ -30,9 +30,9 @@ subscription, no password to lose, no roadmap that abandons you.
 **Website & guide → https://isaacrowntree.github.io/rampset**
 
 <p align="center">
-  <img src="docs/assets/shots/u1-workout.png" alt="Program workout" width="220">
-  <img src="docs/assets/shots/mc-fri-intensity.png" alt="Madcow ramp" width="220">
-  <img src="docs/assets/shots/u1-progress.png" alt="Progress and PRs" width="220">
+  <img src="docs/assets/shots/workout.png" alt="A 5×5 workout in progress" width="220">
+  <img src="docs/assets/shots/history.png" alt="History calendar" width="220">
+  <img src="docs/assets/shots/progress.png" alt="Progress and PRs" width="220">
 </p>
 
 ## What's in it

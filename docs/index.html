@@ -3,320 +3,534 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Rampset — the barbell log you own</title>
-<meta name="description" content="An open-source barbell strength log you actually own. Reshape or rewrite the 5×5 and Madcow engines, keep your data on your own device and cloud, and never get locked in. Self-hostable PWA.">
+<title>Rampset: a free, open-source barbell log</title>
+<meta name="description" content="Rampset is a free, open-source strength log for StrongLifts-style 5×5, Madcow 5×5 or your own routine. It works offline, signs you in with a passkey, and you can export or self-host everything.">
+<link rel="canonical" href="https://isaacrowntree.github.io/rampset/">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-<script>try{document.documentElement.dataset.theme=localStorage.getItem('rs-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark')}catch(e){document.documentElement.dataset.theme='dark'}</script>
-<meta property="og:title" content="Rampset — the barbell log you own">
-<meta property="og:description" content="Open-source & self-hosted. Reshape the 5×5 / Madcow engines or write your own, own your data, no lock-in. Guided programs, plate math, PR tracking.">
+<meta name="theme-color" content="#000000">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="Rampset">
+<meta property="og:url" content="https://isaacrowntree.github.io/rampset/">
+<meta property="og:title" content="Rampset: a free, open-source barbell log">
+<meta property="og:description" content="5×5, Madcow or your own routine. Works offline, passkey sign-in, your data exports anytime. Try it free or self-host it on Cloudflare.">
+<meta property="og:image" content="https://isaacrowntree.github.io/rampset/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Three Rampset screens: the next workout, a 5×5 workout in progress, and progress charts">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem('rs-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark')}catch(e){document.documentElement.dataset.theme='dark'}</script>
 <style>
+  /* Tokens: the gym floor, chalk, and the five competition plate colours. */
   :root{
-    --oled:#000; --ink:#f2f3f5; --ink-dim:#9aa0ab; --ink-faint:#7d838e;
-    --accent:#3d6dff; --green:#34c979; --gold:#f2c21b; --red:#e8433f;
-    --line:#26272d; --surface:#131417;
-    --maxw:1080px;
+    --floor:#000000;      /* OLED black, the app's own background */
+    --chalk:#f2f3f5;      /* text, and the 5 kg plate */
+    --rubber:#9aa0ab;     /* secondary text */
+    --rubber-2:#7d838e;   /* tertiary text */
+    --line:#26272d;
+    --panel:#111215;
+    --p25:#e8433f;        /* red 25 kg */
+    --p20:#3d6dff;        /* blue 20 kg: the app's action colour */
+    --p15:#f2c21b;        /* yellow 15 kg */
+    --p10:#34c979;        /* green 10 kg */
+    --p5:#f2f3f5;         /* white 5 kg */
+    --steel:#6b7079;
+    --display:"Barlow Condensed","Arial Narrow",sans-serif;
+    --text:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --maxw:1120px;
+  }
+  :root[data-theme="light"]{
+    --floor:#f2f2f6; --chalk:#16171b; --rubber:#55585f; --rubber-2:#6a6d75;
+    --line:#dadade; --panel:#ffffff; --p5:#ffffff;
   }
   *{box-sizing:border-box}
-  html{scroll-behavior:smooth}
-  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto} *{animation:none!important;transition:none!important}}
-  body{
-    margin:0; background:var(--oled); color:var(--ink);
-    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Helvetica Neue",sans-serif;
-    -webkit-font-smoothing:antialiased; line-height:1.55; overflow-x:hidden;
-  }
-  /* ambient accent aura, like the app */
-  body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-    background:
-      radial-gradient(48rem 48rem at 82% -12%, rgba(61,109,255,.16), transparent 60%),
-      radial-gradient(40rem 40rem at -18% 8%, rgba(52,201,121,.06), transparent 60%);}
-  a{color:inherit}
-  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
-  .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace}
-  .eyebrow{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12px;letter-spacing:.18em;
-    text-transform:uppercase;color:var(--ink-faint)}
-  .disp{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;
-    font-weight:800;letter-spacing:-.02em;line-height:1.04}
-  .glass{border-radius:24px;border:1px solid rgba(255,255,255,.1);
-    background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));
-    backdrop-filter:blur(20px) saturate(150%);-webkit-backdrop-filter:blur(20px) saturate(150%)}
-  .btn{display:inline-flex;align-items:center;gap:.5em;border-radius:999px;padding:14px 22px;
-    font-size:15px;font-weight:600;text-decoration:none;transition:transform .12s ease,opacity .12s ease}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--floor);color:var(--chalk);font-family:var(--text);
+    font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  img{max-width:100%;height:auto}
+  a{color:inherit;text-decoration-thickness:1px;text-underline-offset:3px}
+  a:hover{text-decoration-color:var(--p20)}
+  :focus-visible{outline:2px solid var(--p20);outline-offset:3px;border-radius:6px}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 20px}
+  @media(min-width:700px){.wrap{padding:0 32px}}
+  .skip{position:absolute;left:-9999px}
+  .skip:focus{left:16px;top:12px;z-index:100;background:var(--p20);color:#fff;padding:8px 14px;border-radius:8px}
+
+  h1,h2,h3{font-family:var(--display);font-weight:700;letter-spacing:-.005em;line-height:1;margin:0}
+  h2{font-size:clamp(34px,5.2vw,52px)}
+  h3{font-size:26px;font-weight:700}
+  p{margin:0}
+  .dim{color:var(--rubber)}
+  .measure{max-width:60ch}
+
+  /* buttons: pill, like the app's own */
+  .btn{display:inline-flex;align-items:center;justify-content:center;min-height:50px;padding:0 24px;border-radius:999px;
+    font:600 17px/1 var(--text);text-decoration:none;transition:transform .12s ease}
   .btn:active{transform:scale(.97)}
-  .btn-primary{background:var(--accent);color:#fff;box-shadow:0 10px 34px rgba(61,109,255,.35),inset 0 1px 0 rgba(255,255,255,.35)}
-  .btn-ghost{border:1px solid var(--line);color:var(--ink);background:rgba(255,255,255,.02)}
-  a.btn:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:8px}
+  .btn-go{background:var(--p20);color:#fff}
+  .btn-go:hover{background:#2f5ff0}
+  .btn-line{border:1px solid var(--line);color:var(--chalk)}
+  .btn-line:hover{border-color:var(--rubber-2)}
+  .textlink{color:var(--p20);font-weight:600;text-decoration:none;min-height:50px;display:inline-flex;align-items:center}
+  .textlink:hover{text-decoration:underline}
 
   /* nav */
-  nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-    background:rgba(0,0,0,.55);border-bottom:1px solid var(--line)}
-  .navrow{display:flex;align-items:center;justify-content:space-between;height:64px}
-  .navlinks{display:flex;align-items:center;gap:22px;font-size:14px;color:var(--ink-dim)}
+  .topnav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--floor) 78%,transparent);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+  .navrow{display:flex;align-items:center;justify-content:space-between;height:60px;gap:16px}
+  .navlinks{display:flex;align-items:center;gap:22px;font-size:15px;color:var(--rubber)}
   .navlinks a{text-decoration:none}
-  .navlinks a:hover{color:var(--ink)}
-  @media(max-width:640px){.navlinks .hide-sm{display:none}}
+  .navlinks a:hover{color:var(--chalk)}
+  .navlinks .try{color:var(--p20);font-weight:600}
+  @media(max-width:720px){.navlinks .opt{display:none}}
+  .tbtn{width:36px;height:36px;border-radius:999px;border:1px solid var(--line);background:transparent;
+    color:var(--rubber);font-size:15px;cursor:pointer;display:grid;place-items:center}
+  .tbtn:hover{color:var(--chalk)}
 
-  /* hero */
-  header{padding:72px 0 40px}
-  .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:40px;align-items:center}
-  @media(max-width:860px){.hero{grid-template-columns:1fr;gap:36px;text-align:center}}
-  h1{font-size:clamp(40px,7vw,68px);margin:16px 0 0}
-  h1 .u{color:var(--accent)}
-  .lede{font-size:clamp(17px,2.4vw,20px);color:var(--ink-dim);max-width:34ch;margin:20px 0 0}
-  @media(max-width:860px){.lede{margin-inline:auto}}
-  .cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}
-  @media(max-width:860px){.cta{justify-content:center}}
-  .phone{justify-self:end;position:relative;width:min(300px,78vw)}
-  @media(max-width:860px){.phone{justify-self:center}}
-  .phone img{width:100%;display:block;border-radius:34px;border:1px solid rgba(255,255,255,.14);
-    box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.5)}
-  .phone::after{content:"";position:absolute;inset:-8% -8% -14%;z-index:-1;
-    background:radial-gradient(60% 55% at 50% 40%,rgba(61,109,255,.28),transparent 70%);filter:blur(8px)}
+  /* ——— hero: the one loud thing ——— */
+  .hero{padding:56px 0 0}
+  .hero-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:40px;align-items:center}
+  .hero h1{font-size:clamp(58px,10.5vw,128px);font-weight:800;line-height:.9;letter-spacing:-.01em;text-transform:none}
+  .hero .lede{font-size:clamp(18px,2.2vw,21px);color:var(--rubber);max-width:36ch;margin-top:34px}
+  .cta{display:flex;flex-wrap:wrap;align-items:center;gap:12px 18px;margin-top:30px}
+  .cta-note{font-size:14px;color:var(--rubber-2);margin-top:14px}
+  .phone.hero-phone{justify-self:center;width:min(300px,72vw);margin-bottom:-90px;position:relative;z-index:2}
+  .phone{display:block;width:100%;border-radius:36px;border:1px solid color-mix(in srgb,var(--chalk) 16%,transparent);
+    box-shadow:0 30px 70px rgba(0,0,0,.55)}
+  [data-theme="light"] .phone{box-shadow:0 24px 60px rgba(20,22,30,.18)}
+  @media(max-width:860px){
+    .hero{padding-top:40px}
+    .hero-grid{grid-template-columns:1fr;gap:36px}
+    .phone.hero-phone{margin-bottom:-70px}
+  }
 
-  /* value strip */
-  .values{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:56px 0}
-  @media(max-width:860px){.values{grid-template-columns:repeat(2,1fr)}}
-  .val{padding:20px}
-  .val .k{font-size:15px;font-weight:650;margin:10px 0 4px}
-  .val .d{font-size:13.5px;color:var(--ink-dim)}
-  .dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+  /* the loaded bar */
+  .bar{margin-top:0;padding:110px 0 28px;border-bottom:1px solid var(--line);position:relative;z-index:1}
+  @media(max-width:860px){.bar{padding-top:90px}}
+  .bar svg{display:block;width:100%;height:auto}
+  .bar figcaption{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 14px;margin-top:14px;
+    font-family:var(--display);font-size:clamp(18px,2.6vw,24px);font-weight:600;color:var(--rubber);font-variant-numeric:tabular-nums}
+  .bar figcaption b{color:var(--chalk);font-weight:700}
+  .plate{transform-box:fill-box}
+  @media (prefers-reduced-motion:no-preference){
+    .side-l .plate{animation:onL .7s cubic-bezier(.2,.8,.2,1) both}
+    .side-r .plate{animation:onR .7s cubic-bezier(.2,.8,.2,1) both}
+    .plate.i1{animation-delay:.08s}.plate.i2{animation-delay:.16s}.plate.i3{animation-delay:.24s}.plate.i4{animation-delay:.32s}.plate.i5{animation-delay:.40s}
+  }
+  @keyframes onL{from{transform:translateX(-340px);opacity:0}}
+  @keyframes onR{from{transform:translateX(340px);opacity:0}}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 
-  /* three ways to train */
-  section.modes-sec{padding:16px 0 40px}
-  .modes-h{font-size:clamp(24px,4vw,34px);margin:12px 0 26px}
-  .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-  @media(max-width:860px){.modes{grid-template-columns:1fr}}
-  .mode{padding:22px 22px 24px;border-top:3px solid var(--m)}
-  .mode .tag{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px;letter-spacing:.1em;
-    text-transform:uppercase;color:var(--m);font-weight:600}
-  .mode h3{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif;font-weight:750;
-    font-size:19px;letter-spacing:-.01em;margin:8px 0 0}
-  .mode p{color:var(--ink-dim);font-size:14.5px;margin:10px 0 0;line-height:1.5}
-  ul.mticks{list-style:none;padding:0;margin:14px 0 0;font-size:13.5px;color:var(--ink-dim)}
-  ul.mticks li{display:flex;gap:9px;padding:4px 0}
-  ul.mticks li::before{content:"";flex:0 0 auto;width:6px;height:6px;border-radius:2px;background:var(--m);margin-top:7px}
+  /* sections */
+  section{padding:84px 0;border-bottom:1px solid var(--line)}
+  @media(max-width:700px){section{padding:60px 0}}
+  .intro{margin-top:16px;color:var(--rubber);max-width:58ch}
+
+  /* install */
+  .install{display:grid;grid-template-columns:1fr 1fr;gap:20px 56px;margin-top:36px}
+  @media(max-width:760px){.install{grid-template-columns:1fr}}
+  .install h3{font-size:24px}
+  ol.steps{list-style:none;counter-reset:s;padding:0;margin:14px 0 0}
+  ol.steps li{counter-increment:s;position:relative;padding:8px 0 8px 40px;border-top:1px solid var(--line)}
+  ol.steps li:last-child{border-bottom:1px solid var(--line)}
+  ol.steps li::before{content:counter(s);position:absolute;left:0;top:7px;font-family:var(--display);font-weight:700;
+    font-size:22px;color:var(--p20);font-variant-numeric:tabular-nums}
+  .kbd{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:6px;font-size:15px;white-space:nowrap}
 
   /* feature rows */
-  section.feat{padding:56px 0;border-top:1px solid var(--line)}
-  .frow{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}
-  .frow.rev .shot{order:2}
-  @media(max-width:860px){.frow,.frow.rev{grid-template-columns:1fr;gap:28px}.frow.rev .shot{order:0}}
-  .frow h2{font-size:clamp(26px,4vw,36px);margin:14px 0 0}
-  .frow p{color:var(--ink-dim);font-size:16px;margin:16px 0 0;max-width:46ch}
-  .shot img{width:min(280px,72vw);display:block;border-radius:28px;border:1px solid rgba(255,255,255,.12);
-    box-shadow:0 24px 60px rgba(0,0,0,.5);margin:0 auto}
-  ul.ticks{list-style:none;padding:0;margin:20px 0 0;font-size:15px;color:var(--ink-dim)}
-  ul.ticks li{display:flex;gap:10px;padding:5px 0}
-  ul.ticks li::before{content:"";flex:0 0 auto;width:7px;height:7px;border-radius:2px;background:var(--accent);margin-top:8px}
+  .row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:56px;align-items:center}
+  .row + .row{margin-top:96px}
+  .row.flip > .shots{order:2}
+  @media(max-width:860px){.row,.row.flip{grid-template-columns:1fr;gap:32px}.row.flip > .shots{order:0}.row + .row{margin-top:72px}}
+  .shots{display:flex;justify-content:center;gap:18px}
+  .shots img{width:min(270px,70vw)}
+  .shots.pair img{width:min(240px,42vw)}
+  .shots.pair img:last-child{margin-top:48px}
+  @media(max-width:420px){.shots.pair{gap:10px}.shots.pair img{border-radius:24px}}
+  .copy p{margin-top:16px;color:var(--rubber);max-width:46ch}
+  .copy p:first-of-type{margin-top:18px}
+  ul.facts{list-style:none;padding:0;margin:22px 0 0;max-width:46ch}
+  ul.facts li{padding:10px 0;border-top:1px solid var(--line);font-size:16px}
+  ul.facts li:last-child{border-bottom:1px solid var(--line)}
+
+  /* programs: a rack of choices, each tagged by plate colour */
+  .programs{margin-top:28px;border-top:1px solid var(--line)}
+  .prog{display:grid;grid-template-columns:10px minmax(0,15rem) minmax(0,1fr);gap:0 24px;padding:20px 0;border-bottom:1px solid var(--line)}
+  .prog .swatch{border-radius:3px;background:var(--c)}
+  .prog h3{font-size:25px}
+  .prog .sub{font-size:15px;color:var(--rubber-2);margin-top:4px}
+  .prog p{color:var(--rubber)}
+  @media(max-width:700px){.prog{grid-template-columns:10px minmax(0,1fr);gap:8px 16px}.prog p{grid-column:2}}
+
+  /* how it works */
+  .how{display:grid;gap:26px;margin-top:30px;max-width:46ch}
+  .how > div{padding-left:18px;border-left:3px solid var(--c)}
+  .how h3{font-size:24px}
+  .copy .how p{color:var(--rubber);margin-top:6px;font-size:16px}
+  .tested{margin-top:48px;padding:22px 24px;border:1px solid var(--line);border-radius:18px;background:var(--panel);max-width:none}
+  .tested p{color:var(--rubber);font-size:16px}
+  .tested strong{color:var(--chalk);font-weight:600}
 
   /* self-host */
-  section.host{padding:72px 0;border-top:1px solid var(--line)}
-  .steps{display:grid;grid-template-columns:1.1fr 1fr;gap:40px;align-items:start;margin-top:28px}
-  @media(max-width:860px){.steps{grid-template-columns:1fr}}
-  ol.stepl{counter-reset:s;list-style:none;padding:0;margin:0}
-  ol.stepl li{counter-increment:s;position:relative;padding:0 0 22px 46px}
-  ol.stepl li::before{content:counter(s);position:absolute;left:0;top:-2px;width:30px;height:30px;border-radius:9px;
-    display:grid;place-items:center;font-family:ui-monospace,monospace;font-size:14px;font-weight:600;
-    color:var(--accent);border:1px solid var(--line);background:rgba(61,109,255,.08)}
-  ol.stepl b{font-weight:650}
-  ol.stepl .m{color:var(--ink-dim);font-size:14.5px}
-  .term{border-radius:18px;border:1px solid var(--line);background:#0b0c0e;overflow:hidden;font-size:13px}
-  .term .bar{display:flex;gap:7px;padding:12px 14px;border-bottom:1px solid var(--line)}
-  .term .bar i{width:11px;height:11px;border-radius:50%;display:block}
-  .term pre{margin:0;padding:16px;overflow-x:auto;line-height:1.7;color:#cfd3da;
-    font-family:ui-monospace,"SF Mono",Menlo,monospace}
-  .term .c{color:var(--ink-faint)} .term .g{color:var(--green)} .term .b{color:var(--accent)}
+  .host{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;margin-top:36px;align-items:start}
+  @media(max-width:900px){.host{grid-template-columns:1fr}}
+  ol.steps.big li{padding:14px 0 14px 44px}
+  ol.steps.big li::before{top:12px;font-size:24px}
+  ol.steps.big b{font-weight:600}
+  ol.steps.big .dim{display:block;font-size:15.5px;margin-top:2px}
+  code{font-family:var(--mono);font-size:.86em;padding:1px 5px;border-radius:5px;background:color-mix(in srgb,var(--chalk) 8%,transparent);overflow-wrap:anywhere}
+  .term{border-radius:16px;border:1px solid #2b2e35;background:#0b0c0e;overflow:hidden;position:sticky;top:84px}
+  .term .tbar{display:flex;gap:7px;padding:12px 14px;border-bottom:1px solid #22252b}
+  .term .tbar i{width:11px;height:11px;border-radius:50%;display:block}
+  .term pre{margin:0;padding:18px;overflow-x:auto;font:13.5px/1.7 var(--mono);color:#cfd3da}
+  .term .c{color:#7d838e}
+  .cost{margin-top:28px;color:var(--rubber);font-size:16px;max-width:62ch}
 
-  .tbtn{width:34px;height:34px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);
-    color:var(--ink-dim);font-size:15px;cursor:pointer;display:grid;place-items:center;transition:color .12s,transform .12s}
-  .tbtn:hover{color:var(--ink)} .tbtn:active{transform:scale(.92)}
-  .tbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  /* related */
+  .related{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:40px;margin-top:32px}
+  @media(max-width:760px){.related{grid-template-columns:1fr;gap:28px}}
+  .related h3{font-size:26px}
+  .related p{color:var(--rubber);margin-top:10px;font-size:16px}
+  .related .links{display:flex;flex-wrap:wrap;gap:4px 20px;margin-top:10px;font-size:15.5px}
+  .related .links a{color:var(--p20);text-decoration:none;font-weight:600;min-height:44px;display:inline-flex;align-items:center}
+  .related .links a:hover{text-decoration:underline}
+  .reading{margin-top:40px;color:var(--rubber);font-size:16px}
+  .reading ul{list-style:none;padding:0;margin:10px 0 0}
+  .reading li{padding:8px 0;border-top:1px solid var(--line)}
+  .reading li:last-child{border-bottom:1px solid var(--line)}
+  .reading a{color:var(--chalk);font-weight:600}
 
-  /* ————— light skin: the app has one, so the site does too ————— */
-  :root[data-theme="light"]{--oled:#f2f2f6;--ink:#16171b;--ink-dim:#55585f;--ink-faint:#696c74;--line:#dadade;--surface:#fff}
-  [data-theme="light"] body::before{background:radial-gradient(46rem 46rem at 82% -12%,rgba(61,109,255,.10),transparent 60%);opacity:.75}
-  [data-theme="light"] nav{background:rgba(242,242,246,.72)}
-  [data-theme="light"] .glass{border-color:rgba(0,0,0,.08);background:linear-gradient(180deg,rgba(255,255,255,.85),rgba(255,255,255,.62))}
-  [data-theme="light"] .btn-ghost{background:rgba(0,0,0,.02)}
-  [data-theme="light"] .tbtn{background:rgba(0,0,0,.03)}
-  [data-theme="light"] .phone img,[data-theme="light"] .shot img{border-color:rgba(0,0,0,.1);box-shadow:0 24px 60px rgba(0,0,0,.16)}
-  [data-theme="light"] .phone::after{background:radial-gradient(60% 55% at 50% 40%,rgba(61,109,255,.16),transparent 70%)}
-  /* terminal stays dark in both themes — it's a terminal */
-  [data-theme="light"] .term{border-color:#2b2e35}
+  /* closing */
+  .closing{text-align:left;border-bottom:0}
+  .closing h2{max-width:16ch}
 
-  footer{border-top:1px solid var(--line);padding:44px 0;color:var(--ink-faint);font-size:13.5px}
-  .fr{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
-  footer a{color:var(--ink-dim);text-decoration:none}
-  footer a:hover{color:var(--ink)}
-  .disclaim{margin-top:14px;max-width:60ch}
+  footer{border-top:1px solid var(--line);padding:40px 0 56px;color:var(--rubber-2);font-size:14.5px}
+  .frow{display:flex;justify-content:space-between;gap:24px;flex-wrap:wrap;align-items:flex-start}
+  .fnav{display:grid;grid-template-columns:repeat(2,auto);gap:6px 36px}
+  @media(min-width:760px){.fnav{grid-template-columns:repeat(3,auto)}}
+  footer a{color:var(--rubber);text-decoration:none}
+  footer a:hover{color:var(--chalk)}
+  .disclaim{margin-top:24px;max-width:70ch}
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 
-<nav>
+<nav class="topnav" aria-label="Site">
   <div class="wrap navrow">
-    <img class="logoimg" src="assets/rampset-logo.svg" alt="Rampset" height="26">
+    <a href="#top" aria-label="Rampset home"><img class="logoimg" src="assets/rampset-logo.svg" alt="Rampset" width="122" height="26"></a>
     <div class="navlinks">
-      <a href="#features" class="hide-sm">Features</a>
-      <a href="#selfhost" class="hide-sm">Self-host</a>
-      <a href="https://github.com/isaacrowntree/rampset">GitHub</a>
-      <button id="themeBtn" class="tbtn" type="button" aria-label="Switch between light and dark">☾</button>
+      <a class="opt" href="#features">Features</a>
+      <a class="opt" href="#self-host">Self-host</a>
+      <a class="opt" href="https://github.com/isaacrowntree/rampset">GitHub</a>
+      <a class="try" href="https://liftlog.zackdesign.biz">Try it</a>
+      <button id="themeBtn" class="tbtn" type="button" aria-label="Switch to light theme">☾</button>
     </div>
   </div>
 </nav>
 
-<header>
-  <div class="wrap hero">
+<main id="main">
+<header class="hero" id="top">
+  <div class="wrap hero-grid">
     <div>
-      <span class="eyebrow">Open-source · yours to keep · self-hosted</span>
-      <h1 class="disp">Your lifts. Your data. <span class="u">Your rules.</span></h1>
-      <p class="lede">An open-source barbell log you actually own. Reshape the 5×5 and Madcow engines — or write your own — keep every rep on your device, and export it anytime. Not at the mercy of Google, Apple, or someone else's product roadmap.</p>
+      <h1>A barbell log you keep.</h1>
+      <p class="lede">Rampset is a free, open-source strength log for 5×5, Madcow, or a routine you write yourself. It lives on your phone, works with no signal, and signs you in with Face ID or a fingerprint.</p>
       <div class="cta">
-        <a class="btn btn-primary" href="https://github.com/isaacrowntree/rampset">View on GitHub →</a>
-        <a class="btn btn-ghost" href="#selfhost">Run your own</a>
+        <a class="btn btn-go" href="https://liftlog.zackdesign.biz">Try Rampset free</a>
+        <a class="btn btn-line" href="#self-host">Self-host it</a>
+        <a class="textlink" href="https://github.com/isaacrowntree/rampset">Source on GitHub</a>
       </div>
+      <p class="cta-note">No password, no subscription, no ads. MIT licensed.</p>
     </div>
-    <div class="phone"><img id="heroPhone" src="assets/shots/u1-home.png" alt="Rampset home screen showing the next workout"></div>
+    <img class="phone hero-phone" id="heroPhone" src="assets/shots/home.png" width="786" height="1704"
+      data-alt-light="Rampset home screen in the light theme: Workout A is in progress with 3 sets logged and a Resume button, and next up is Workout B with Squat 5×5 at 100 kg, Overhead press 5×5 at 37.5 kg and Deadlift 1×5 at 115 kg"
+      data-alt-dark="Rampset home screen: next up is Workout A, with Squat 5×5 at 100 kg, Bench press 5×5 at 62.5 kg and Barbell row 5×5 at 55 kg, and a Start Workout A button"
+      alt="Rampset home screen: next up is Workout A, with Squat 5×5 at 100 kg, Bench press 5×5 at 62.5 kg and Barbell row 5×5 at 55 kg, and a Start Workout A button">
   </div>
+  <figure class="bar wrap" aria-labelledby="barcap">
+    <svg viewBox="0 0 1000 150" role="img" aria-labelledby="barcap">
+      <!-- shaft and sleeves -->
+      <rect x="0" y="69" width="1000" height="12" rx="6" fill="var(--steel)"/>
+      <rect x="18" y="64" width="300" height="22" rx="4" fill="var(--steel)"/>
+      <rect x="682" y="64" width="300" height="22" rx="4" fill="var(--steel)"/>
+      <rect x="312" y="52" width="12" height="46" rx="3" fill="var(--steel)"/>
+      <rect x="676" y="52" width="12" height="46" rx="3" fill="var(--steel)"/>
+      <!-- left side, inside out: 25, 20, 15, 10, 5 -->
+      <g class="side-l">
+        <rect class="plate i1" x="270" y="4"  width="38" height="142" rx="6" fill="var(--p25)"/>
+        <rect class="plate i2" x="232" y="4"  width="34" height="142" rx="6" fill="var(--p20)"/>
+        <rect class="plate i3" x="200" y="4"  width="28" height="142" rx="6" fill="var(--p15)"/>
+        <rect class="plate i4" x="174" y="4"  width="22" height="142" rx="6" fill="var(--p10)"/>
+        <rect class="plate i5" x="154" y="34" width="16" height="82"  rx="5" fill="var(--p5)" stroke="var(--line)"/>
+      </g>
+      <g class="side-r">
+        <rect class="plate i1" x="692" y="4"  width="38" height="142" rx="6" fill="var(--p25)"/>
+        <rect class="plate i2" x="734" y="4"  width="34" height="142" rx="6" fill="var(--p20)"/>
+        <rect class="plate i3" x="772" y="4"  width="28" height="142" rx="6" fill="var(--p15)"/>
+        <rect class="plate i4" x="804" y="4"  width="22" height="142" rx="6" fill="var(--p10)"/>
+        <rect class="plate i5" x="830" y="34" width="16" height="82"  rx="5" fill="var(--p5)" stroke="var(--line)"/>
+      </g>
+    </svg>
+    <figcaption id="barcap"><span>25 + 20 + 15 + 10 + 5 a side</span><span>on a 20 kg bar</span><b>= 170 kg</b></figcaption>
+  </figure>
 </header>
 
-<div class="wrap">
-  <div class="values">
-    <div class="val glass"><span class="dot" style="background:var(--accent)"></span><div class="k">You own it</div><div class="d">MIT-licensed, self-hosted. Your data lives on your device and your own cloud — export it all to CSV whenever.</div></div>
-    <div class="val glass"><span class="dot" style="background:var(--green)"></span><div class="k">Editable to the core</div><div class="d">Tweak any program, rewrite the progression engines, or build your own. Every set, rep, and rule is yours to change.</div></div>
-    <div class="val glass"><span class="dot" style="background:var(--gold)"></span><div class="k">No lock-in, ever</div><div class="d">No subscription, no account to lose, no sunset. It can't be taken away or quietly enshittified out from under you.</div></div>
-    <div class="val glass"><span class="dot" style="background:var(--red)"></span><div class="k">Real training, built in</div><div class="d">Guided 5×5 and Madcow with auto weight jumps, deloads, plate math, warm-up ramps, and PR tracking — offline.</div></div>
-  </div>
-</div>
-
-<section class="modes-sec"><div class="wrap">
-  <span class="eyebrow">Three ways to train</span>
-  <h2 class="disp modes-h">Run a proven program, or do your own thing.</h2>
-  <div class="modes">
-    <div class="mode glass" style="--m:var(--accent)">
-      <span class="tag">StrongLifts 5×5</span>
-      <h3>Guided linear progression</h3>
-      <p>The classic beginner program. Squat every session, alternating Workout A/B, +2.5&nbsp;kg every time you hit all your reps, and an automatic deload when you stall.</p>
-      <ul class="mticks">
-        <li>Tap-cycle plate circles + per-side plate math</li>
-        <li>Warm-up ramps and empty-bar sets built in</li>
-        <li>Variants: Plus, Lite, Mini, Ultra, Ultra&nbsp;Max</li>
-      </ul>
-    </div>
-    <div class="mode glass" style="--m:var(--gold)">
-      <span class="tag">Madcow 5×5</span>
-      <h3>Weekly ramp, for intermediates</h3>
-      <p>Where you go when linear stalls. Sets ramp to a top each day, a Friday PR set sets next week's weight, with heavy / light / intensity days and back-off volume.</p>
-      <ul class="mticks">
-        <li>Prescribed ramp checklist, top set called out</li>
-        <li>Progresses weekly, not every workout</li>
-        <li>One shared top per lift across the week</li>
-      </ul>
-    </div>
-    <div class="mode glass" style="--m:var(--green)">
-      <span class="tag">Freeform routine</span>
-      <h3>Strong-style, your rules</h3>
-      <p>For everything else. Set rows — weight × reps — with every set prefilled from last time. Timed holds and bodyweight sets, per-exercise rest. Nothing is prescribed; you drive.</p>
-      <ul class="mticks">
-        <li>Accessory, glute, mobility — any split you invent</li>
-        <li>Add exercises and sets on the fly</li>
-        <li>Remembers what you did last time</li>
-      </ul>
+<section id="try" aria-labelledby="try-h">
+  <div class="wrap">
+    <h2 id="try-h">Put it on your home screen</h2>
+    <p class="intro">Rampset is a web app you install from the browser, so there's no app store. The public copy at <a href="https://liftlog.zackdesign.biz">liftlog.zackdesign.biz</a> is open to anyone: create an account with a passkey, then add it to your home screen and it opens full screen like any other app, offline included.</p>
+    <div class="install">
+      <div>
+        <h3>iPhone or iPad</h3>
+        <ol class="steps">
+          <li>Open <a href="https://liftlog.zackdesign.biz">liftlog.zackdesign.biz</a> in Safari.</li>
+          <li>Tap <span class="kbd">Share</span>, then <span class="kbd">Add to Home Screen</span>.</li>
+          <li>Open Rampset from the new icon and tap <b>Create account</b>.</li>
+        </ol>
+      </div>
+      <div>
+        <h3>Android</h3>
+        <ol class="steps">
+          <li>Open <a href="https://liftlog.zackdesign.biz">liftlog.zackdesign.biz</a> in Chrome.</li>
+          <li>Tap the <span class="kbd">⋮</span> menu, then <span class="kbd">Add to Home screen</span> or <span class="kbd">Install app</span>.</li>
+          <li>Open Rampset from the new icon and tap <b>Create account</b>.</li>
+        </ol>
+      </div>
     </div>
   </div>
-</div></section>
+</section>
 
-<div id="features">
-<section class="feat"><div class="wrap"><div class="frow">
-  <div class="shot"><img src="assets/shots/u1-workout.png" alt="Program workout with tap-cycle plate circles"></div>
-  <div>
-    <span class="eyebrow">Program mode</span>
-    <h2 class="disp">Tap a plate. Set logged.</h2>
-    <p>Each set is a plate you cycle with a tap — full reps, missed reps, skipped. The bar’s working weight, warm-up ramp, and per-side plate math are already worked out. You confirm; the app tracks.</p>
-    <ul class="ticks"><li>Automatic +weight on success, deload after repeated fails</li><li>Warm-up ramps and empty-bar sets built in</li><li>Rest timer with a bell — counts through your set</li></ul>
+<section id="features" aria-labelledby="features-h">
+  <div class="wrap">
+    <h2 id="features-h">What it does</h2>
+    <p class="intro">Everything below is from the current app, on an iPhone-sized screen, with a few weeks of training logged.</p>
+
+    <div class="row" style="margin-top:56px">
+      <div class="shots"><img class="phone" src="assets/shots/workout.png" width="786" height="1704" loading="lazy"
+        alt="A 5×5 workout in progress: three squat sets at 100 kg logged as filled red circles, bench press at 62.5 kg and barbell row at 55 kg still to do, and a rest timer counting at the bottom"></div>
+      <div class="copy">
+        <h3 style="font-size:clamp(30px,4vw,40px)">Tap a set when you rack the bar</h3>
+        <p>Each work set is a circle. Tap it once for all five reps; tap again to count down a missed rep. The circle takes the colour of the biggest plate on the bar, so you can check you've loaded red 25s from across the room.</p>
+        <ul class="facts">
+          <li>The rest timer starts by itself and rings when it's time to go again.</li>
+          <li>A warm-up tab ramps you up from the empty bar, with plates per side worked out.</li>
+          <li>Hit every rep and the weight goes up next time. Stall three times and it backs off 10%.</li>
+          <li>The screen stays awake for the whole workout.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="row flip">
+      <div class="shots pair">
+        <img class="phone" src="assets/shots/history.png" width="786" height="1704" loading="lazy"
+          alt="History calendar for October 2026 with workouts marked on Mondays, Wednesdays and Fridays, and recent workouts listed below with their sets and weights">
+        <img class="phone" src="assets/shots/progress-squat.png" width="786" height="1704" loading="lazy"
+          alt="Squat progress: a personal best estimated one-rep max of 113.8 kg marked with a gold star, and rising charts for top set, estimated 1RM and volume">
+      </div>
+      <div class="copy">
+        <h3 style="font-size:clamp(30px,4vw,40px)">See every session, and how far you've come</h3>
+        <p>History is a calendar of every workout with a recap of what you lifted. Progress charts each lift's top set, estimated one-rep max, volume and reps, alongside your body weight.</p>
+        <ul class="facts">
+          <li>A gold star marks a new personal record the moment you set it.</li>
+          <li>Got a number wrong? Open the workout and fix it. The correction reaches your other devices too.</li>
+        </ul>
+      </div>
+    </div>
   </div>
-</div></div></section>
+</section>
 
-<section class="feat"><div class="wrap"><div class="frow rev">
-  <div class="shot"><img src="assets/shots/mc-fri-intensity.png" alt="Madcow intensity day ramp checklist with a highlighted top set"></div>
-  <div>
-    <span class="eyebrow">The ramp</span>
-    <h2 class="disp">Ramped sets, done right.</h2>
-    <p>Madcow and heavy days climb to a top set, then a PR set and a back-off — prescribed, checked off one tap at a time, with the top set called out. The name isn’t decoration: <em>ramping</em> is how the engine progresses you.</p>
-    <ul class="ticks"><li>Heavy / light / intensity days, each with its own scheme</li><li>The Friday PR sets next week’s top automatically</li><li>Freeform routine mode too — every set prefilled from last time</li></ul>
+<section id="programs" aria-labelledby="programs-h">
+  <div class="wrap">
+    <h2 id="programs-h">Pick a program, or write your own</h2>
+    <p class="intro">You choose when you sign up and can switch any time in Settings. Your history and working weights come with you.</p>
+    <div class="programs">
+      <div class="prog" style="--c:var(--p25)">
+        <span class="swatch" aria-hidden="true"></span>
+        <div><h3>StrongLifts-style 5×5</h3><div class="sub">For starting out</div></div>
+        <p>Workouts A and B alternate, squat every session, and weight goes up every time you get all your reps. Variants included: Plus, Lite, Mini, Ultra, Ultra Max and Intermediate.</p>
+      </div>
+      <div class="prog" style="--c:var(--p15)">
+        <span class="swatch" aria-hidden="true"></span>
+        <div><h3>Madcow 5×5</h3><div class="sub">When linear gains slow down</div></div>
+        <p>Heavy, light and intensity days. Sets ramp up to a top set, and Friday's top set decides next week's weights, so you progress weekly instead of every session.</p>
+      </div>
+      <div class="prog" style="--c:var(--p10)">
+        <span class="swatch" aria-hidden="true"></span>
+        <div><h3>Custom routine</h3><div class="sub">Your own split</div></div>
+        <p>Add, rename, reorder and delete days; add exercises, change their sets, reps and rest, and move them around. Nothing is prescribed: every set fills in from what you did last time.</p>
+      </div>
+    </div>
+
+    <div class="row flip" style="margin-top:72px">
+      <div class="shots pair">
+        <img class="phone" src="assets/shots/program.png" width="786" height="1704" loading="lazy"
+          alt="Program editor in the light theme showing a custom routine with Push, Pull and Legs days, each listing its exercises with sets and reps, and Edit and Add exercise buttons">
+        <img class="phone" src="assets/shots/routine-workout.png" width="786" height="1704" loading="lazy"
+          alt="A Push day from the custom routine: bench press and overhead press set rows prefilled with last session's weights and reps, each with a check button">
+      </div>
+      <div class="copy">
+        <h3 style="font-size:clamp(30px,4vw,40px)">A routine built in the app</h3>
+        <p>This one is a three-day push, pull and legs split, made in the Program tab. On the day, each row already holds last session's weight and reps; change what you need and tick it off.</p>
+        <p>Dark or light is a setting per account. The custom routine above is shown in light.</p>
+      </div>
+    </div>
   </div>
-</div></div></section>
+</section>
 
-<section class="feat"><div class="wrap"><div class="frow">
-  <div class="shot"><img src="assets/shots/u1-progress.png" alt="Progress screen with e1RM, volume, and personal-record stars"></div>
-  <div>
-    <span class="eyebrow">Progress</span>
-    <h2 class="disp">See the line go up.</h2>
-    <p>Estimated 1RM, top set, volume and total reps per lift — with a gold star the moment you beat an all-time best. Tap any lift for the full picture; the history calendar shows every session at a glance.</p>
-    <ul class="ticks"><li>Personal records detected and marked, in Progress and History</li><li>Body-weight trend tracked alongside the lifts</li><li>Import your existing StrongLifts or Strong export via CSV</li></ul>
+<section id="your-data" aria-labelledby="data-h">
+  <div class="wrap">
+    <div class="row">
+      <div class="shots"><img class="phone" src="assets/shots/your-data.png" width="786" height="1704" loading="lazy"
+        alt="Settings, Your data: this device holds 24 workouts and 312 sets; options to export CSV, back up to the cloud, restore from the cloud, download a backup, restore from a backup file and import from another app"></div>
+      <div class="copy">
+        <h2 id="data-h">Your data comes and goes with you</h2>
+        <p>Every workout is stored on your phone first. Settings → Your data is where it moves in and out.</p>
+        <ul class="facts">
+          <li><b>Import</b> your history from a StrongLifts or Strong export.</li>
+          <li><b>Download a backup</b> of everything (programs, weights, history) and restore it on any phone or into any account.</li>
+          <li><b>Export CSV</b> for a spreadsheet.</li>
+          <li><b>Cloud backup</b> runs after every workout, and you can restore from it.</li>
+          <li><b>Sync</b> keeps your phone and tablet in step.</li>
+        </ul>
+      </div>
+    </div>
   </div>
-</div></div></section>
-</div>
+</section>
 
-<section id="selfhost" class="host"><div class="wrap">
-  <span class="eyebrow">Self-host</span>
-  <h2 class="disp" style="font-size:clamp(28px,4.5vw,42px);margin:12px 0 0">Run your own in ~10 minutes.</h2>
-  <p style="color:var(--ink-dim);max-width:52ch;margin-top:14px">Rampset deploys to Cloudflare’s free tier — Workers to serve the app, Cloudflare Access (also free) to put a login in front. No servers, no monthly bill for a household.</p>
-  <div class="steps">
-    <ol class="stepl">
-      <li><b>Fork &amp; clone</b> the repo, then <span class="mono" style="color:var(--ink-dim)">npm install</span>.</li>
-      <li><b>Add your lifters.</b> <span class="m">Copy <span class="mono">.env.example</span> → <span class="mono">.env.local</span> and set names, units, and starting weights. No personal data lives in the repo.</span></li>
-      <li><b>Deploy to Cloudflare Workers.</b> <span class="m">One command via the OpenNext adapter. Free tier is plenty for a few users.</span></li>
-      <li><b>Put Cloudflare Access in front.</b> <span class="m">A free zero-trust login (email code or Google, free up to 50 users) so only your people get in — that’s your auth, no passwords to manage. Each profile is keyed to the signed-in email.</span></li>
-      <li><b>Cloud backups (optional).</b> <span class="m">Bind an R2 bucket as <span class="mono">BACKUPS</span>. Backups sit inside R2’s 10&nbsp;GB free tier, though enabling R2 needs a card on file (still $0 under the limits). Rather not? Skip it — the app is fully offline on local storage, and <span class="mono">Settings → Export</span> gives you a CSV backup anytime.</span></li>
-    </ol>
-    <div class="term" role="img" aria-label="Terminal showing the setup commands">
-      <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
-<pre><span class="c"># get it running locally</span>
-git clone https://github.com/you/rampset
+<section id="how" aria-labelledby="how-h">
+  <div class="wrap">
+    <div class="row">
+      <div class="copy">
+        <h2 id="how-h">How it works</h2>
+        <p>Rampset is a Next.js app running on Cloudflare Workers. What matters is what happens on your phone and how it signs you in.</p>
+        <div class="how">
+          <div style="--c:var(--p20)">
+            <h3>Offline first</h3>
+            <p>The phone's own database (IndexedDB) is the source of truth. A whole workout works with no connection at all, in a basement gym or on a plane, and uploads when you're back online.</p>
+          </div>
+          <div style="--c:var(--p15)">
+            <h3>Sync between devices</h3>
+            <p>Each account has its own Durable Object that puts every change in order, using the open-source <a href="https://github.com/isaacrowntree/durable-sync">durable-sync</a> library. A workout arrives on your other device exactly once, and if two devices correct the same workout, the later edit wins.</p>
+          </div>
+          <div style="--c:var(--p10)">
+            <h3>Passkeys, not passwords</h3>
+            <p>Your phone saves a passkey, and Face ID or your fingerprint is the login. Add a recovery email and, if you lose every device, a 6-digit code gets you back in. One account per device. Sign-in is the open-source <a href="https://github.com/isaacrowntree/durable-auth">durable-auth</a> library.</p>
+          </div>
+        </div>
+      </div>
+      <div class="shots"><img class="phone" src="assets/shots/signup.png" width="786" height="1704" loading="lazy"
+        alt="Create account screen: a name field, a choice of StrongLifts 5×5, Madcow 5×5 or Custom routine, and a Create with passkey button"></div>
+    </div>
+    <div class="tested">
+      <p><strong>How it's tested.</strong> End-to-end journeys drive the built worker in a real browser with nothing mocked: signing up with a passkey, training 5×5, Madcow and a custom routine, correcting history, importing from StrongLifts, recovering by email, deleting an account. Sync is checked on an online, offline, flappy and slow connection. Integration tests run the Durable Objects on workerd, and more than 350 unit and component tests cover the progression engines and screens.</p>
+    </div>
+  </div>
+</section>
+
+<section id="self-host" aria-labelledby="host-h">
+  <div class="wrap">
+    <h2 id="host-h">Run your own copy</h2>
+    <p class="intro">Rampset deploys to your own Cloudflare account. Anyone can create an account on your instance. Accounts, passkeys and sync live in Durable Objects, so there's no database to set up.</p>
+    <div class="host">
+      <ol class="steps big">
+        <li><b>Clone and install.</b> <span class="dim">Fork <a href="https://github.com/isaacrowntree/rampset">the repo</a>, then <code>npm install</code>. <code>npm run preview</code> runs the real worker locally, with Durable Objects, R2 and email.</span></li>
+        <li><b>Point it at your domain.</b> <span class="dim">In <code>wrangler.jsonc</code>, change the route from <code>liftlog.zackdesign.biz</code> to your own domain. Passkeys are tied to that one origin.</span></li>
+        <li><b>Deploy.</b> <span class="dim"><code>npm run deploy</code> builds with OpenNext and ships the worker with its two Durable Objects, <code>AUTH</code> and <code>SYNC_JOURNAL</code>.</span></li>
+        <li><b>Cloud backups (optional).</b> <span class="dim">Create the R2 bucket that the <code>BACKUPS</code> binding points at. Leave the binding out and sync still works; Download backup still gives people a full file.</span></li>
+        <li><b>Recovery email (optional).</b> <span class="dim">Onboard a domain with <code>npx wrangler email sending enable &lt;domain&gt;</code> and set <code>EMAIL_FROM</code> to an address on it. Without it, the app doesn't offer email recovery.</span></li>
+        <li><b>Bot protection (optional).</b> <span class="dim">Create a Turnstile widget and set the <code>TURNSTILE_SITE_KEY</code> var and <code>TURNSTILE_SECRET_KEY</code> secret. Sign-in, email and sync routes are already rate limited.</span></li>
+      </ol>
+      <div class="term" role="img" aria-label="Terminal commands: clone the repository, install, preview locally on port 8787, create the R2 bucket, and deploy">
+        <div class="tbar" aria-hidden="true"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+<pre aria-hidden="true"><span class="c"># run the real worker locally</span>
+git clone https://github.com/isaacrowntree/rampset
 cd rampset && npm install
-cp .env.example .env.local   <span class="c"># edit your lifters</span>
-npm run dev                  <span class="c"># → localhost:3000</span>
+npm run preview        <span class="c"># localhost:8787</span>
 
-<span class="c"># ship it to Cloudflare Workers</span>
-npm run deploy
+<span class="c"># optional: cloud backups</span>
+npx wrangler r2 bucket create liftlog-backups
 
-<span class="g">✓</span> deployed to <span class="b">rampset.you.workers.dev</span>
-<span class="c"># then add Cloudflare Access (free) in the
-# dashboard to gate it to your emails.</span></pre>
+<span class="c"># ship it</span>
+npm run deploy</pre>
+      </div>
+    </div>
+    <p class="cost">What it costs: Workers and Durable Objects fit in Cloudflare's free tier for a household. Backups fit easily in R2's free 10 GB, but Cloudflare asks for a payment method before it turns R2 on. You won't be charged under the free limits. The <a href="https://github.com/isaacrowntree/rampset#readme">README</a> has the details.</p>
+  </div>
+</section>
+
+<section id="related" aria-labelledby="related-h">
+  <div class="wrap">
+    <h2 id="related-h">Built from two smaller projects</h2>
+    <p class="intro">The hard parts of Rampset have been pulled out into libraries that any Cloudflare Workers app can use.</p>
+    <div class="related">
+      <div>
+        <h3>durable-sync</h3>
+        <p>Rampset's offline-first sync. A per-account journal in a Durable Object orders every change, so devices that were offline catch up without duplicates.</p>
+        <div class="links"><a href="https://isaacrowntree.com/durable-sync/">Project page</a><a href="https://github.com/isaacrowntree/durable-sync">Source</a><a href="https://zackdesign.biz/durable-sync/">Write-up</a></div>
+      </div>
+      <div>
+        <h3>durable-auth</h3>
+        <p>Rampset's passkey sign-in, extracted into a library: passkeys, sessions and email recovery codes, kept in a Durable Object.</p>
+        <div class="links"><a href="https://isaacrowntree.com/durable-auth/">Project page</a><a href="https://github.com/isaacrowntree/durable-auth">Source</a><a href="https://zackdesign.biz/durable-auth/">Write-up</a></div>
+      </div>
+    </div>
+    <div class="reading">
+      Further reading
+      <ul>
+        <li><a href="https://zackdesign.biz/rampset/">Rampset</a>: why it exists and how it was built.</li>
+        <li><a href="https://zackdesign.biz/durable-sync/">durable-sync</a>: offline-first sync on a Durable Object.</li>
+        <li><a href="https://zackdesign.biz/durable-auth/">durable-auth</a>: passkey sign-in on a Durable Object.</li>
+      </ul>
     </div>
   </div>
-</div></section>
+</section>
 
-<section class="feat"><div class="wrap"><div class="frow rev">
-  <div class="shot"><img src="assets/shots/u2-home.png" alt="Rampset in its light skin"></div>
-  <div>
-    <span class="eyebrow">Profiles</span>
-    <h2 class="disp">Share it with the whole household.</h2>
-    <p>Add a profile for your partner, your kids, whoever trains with you — each with their own programs, history, and look (OLED black or clean light). Every profile is keyed to a Cloudflare Access email, so people land on their own automatically; on a shared home-screen install, switch between them with a tap.</p>
-    <div class="cta"><a class="btn btn-primary" href="https://github.com/isaacrowntree/rampset">Get Rampset →</a></div>
-  </div>
-</div></div></section>
-
-<footer><div class="wrap">
-  <div class="fr">
-    <img class="logoimg" src="assets/rampset-logo.svg" alt="Rampset" height="22">
-    <div style="display:flex;gap:22px">
-      <a href="https://github.com/isaacrowntree/rampset">GitHub</a>
-      <a href="https://github.com/isaacrowntree/rampset#readme">Docs</a>
-      <a href="https://github.com/isaacrowntree/rampset/blob/main/LICENSE">MIT License</a>
+<section class="closing" aria-labelledby="close-h">
+  <div class="wrap">
+    <h2 id="close-h">Log your next workout in Rampset</h2>
+    <p class="intro">It's free and there's nothing to download from a store. Your history comes with you if you leave.</p>
+    <div class="cta">
+      <a class="btn btn-go" href="https://liftlog.zackdesign.biz">Try Rampset free</a>
+      <a class="btn btn-line" href="#self-host">Self-host it</a>
+      <a class="textlink" href="https://github.com/isaacrowntree/rampset">Source on GitHub</a>
     </div>
   </div>
-  <p class="disclaim">Rampset is an independent open-source project. “StrongLifts” and “Madcow” refer to well-known training methods and are not affiliated with or endorsed by this project.</p>
-</div></footer>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="frow">
+      <img class="logoimg" src="assets/rampset-logo.svg" alt="Rampset" width="104" height="22">
+      <nav class="fnav" aria-label="Footer">
+        <a href="https://liftlog.zackdesign.biz">Try Rampset</a>
+        <a href="https://github.com/isaacrowntree/rampset">Rampset on GitHub</a>
+        <a href="https://github.com/isaacrowntree/rampset/blob/main/LICENSE">MIT License</a>
+        <a href="https://isaacrowntree.com/durable-sync/">durable-sync</a>
+        <a href="https://isaacrowntree.com/durable-auth/">durable-auth</a>
+        <a href="https://zackdesign.biz/rampset/">Rampset write-up</a>
+        <a href="https://zackdesign.biz/durable-sync/">durable-sync write-up</a>
+        <a href="https://zackdesign.biz/durable-auth/">durable-auth write-up</a>
+        <a href="https://github.com/isaacrowntree/rampset/security/policy">Report a security issue</a>
+      </nav>
+    </div>
+    <p class="disclaim">Rampset is an independent open-source project. “StrongLifts” and “Madcow” refer to well-known training methods and are not affiliated with or endorsed by this project.</p>
+  </div>
+</footer>
 
 <script>
   (function(){
     var html=document.documentElement, btn=document.getElementById('themeBtn'), hero=document.getElementById('heroPhone');
-    function sync(){var l=html.dataset.theme==='light';btn.textContent=l?'☀':'☾';
-      if(hero)hero.src=l?'assets/shots/u2-home.png':'assets/shots/u1-home.png';
-      document.querySelectorAll('.logoimg').forEach(function(img){
-        img.src=l?'assets/rampset-logo-light.svg':'assets/rampset-logo.svg';});}
+    function sync(){
+      var light=html.dataset.theme==='light';
+      btn.textContent=light?'☀':'☾';
+      btn.setAttribute('aria-label',light?'Switch to dark theme':'Switch to light theme');
+      if(hero){hero.src=light?'assets/shots/home-light.png':'assets/shots/home.png';hero.alt=light?hero.dataset.altLight:hero.dataset.altDark;}
+      document.querySelectorAll('.logoimg').forEach(function(img){img.src=light?'assets/rampset-logo-light.svg':'assets/rampset-logo.svg';});
+    }
     sync();
     btn.addEventListener('click',function(){
       html.dataset.theme=html.dataset.theme==='light'?'dark':'light';
@@ -325,6 +539,5 @@ npm run deploy
     });
   })();
 </script>
-
 </body>
 </html>
