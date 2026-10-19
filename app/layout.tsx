@@ -64,9 +64,9 @@ export default function RootLayout({
       <body
         className="antialiased"
       >
-        {/* use-credentials so the manifest fetch carries the Cloudflare
-            Access session cookie — required for PWA install behind Access.
-            React hoists this into <head>. */}
+        {/* use-credentials: the manifest is public, but a self-host behind
+            an auth proxy (Cloudflare Access) needs its cookie on this fetch
+            to stay installable. React hoists this into <head>. */}
         <link
           rel="manifest"
           href="/manifest.webmanifest"
