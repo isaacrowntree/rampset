@@ -15,7 +15,6 @@ import { markJustFinished } from "@/lib/justFinished";
 
 export interface CompleteWorkoutArgs {
   userId: string;
-  email: string;
   workoutId: string;
   /** Work sets logged — 0 means an empty workout, discarded, no congrats. */
   workSets: number;
@@ -28,7 +27,7 @@ export interface CompleteWorkoutDeps {
   /** Best-effort network push (flush the outbox + cloud backup). Kicked off
    * AFTER navigation and never awaited, so a slow connection can't stall the
    * Finish flow. Overridable for tests. */
-  pushBackground?: (userId: string, email: string) => void;
+  pushBackground?: (userId: string) => void;
   /** Queue the finished workout for sync. Overridable for tests. */
   enqueue?: (userId: string, workoutId: string) => Promise<void>;
 }
@@ -36,7 +35,7 @@ export interface CompleteWorkoutDeps {
 /** Flush the sync outbox and snapshot to the cloud. Chunk imports and the
  * requests themselves can hang on a gym connection, so this only ever runs
  * detached from the UI. */
-function defaultPushBackground(userId: string, email: string): void {
+function defaultPushBackground(userId: string): void {
   void (async () => {
     const [{ syncFor }, { backupToCloud }, { db }] = await Promise.all([
       import("@/lib/syncFor"),
@@ -48,7 +47,7 @@ function defaultPushBackground(userId: string, email: string): void {
     // foregrounding burst, not to make a just-finished workout wait 10s.
     // It does NOT skip the identity gate — nothing does.
     if (user) void syncFor(user).now({ force: true }).catch(() => {});
-    void backupToCloud(userId, email).catch(() => {});
+    void backupToCloud(userId).catch(() => {});
   })().catch(() => {});
 }
 
@@ -56,7 +55,7 @@ export async function completeWorkout(
   args: CompleteWorkoutArgs,
   deps: CompleteWorkoutDeps,
 ): Promise<void> {
-  const { userId, email, workoutId, workSets, tonnageKg } = args;
+  const { userId, workoutId, workSets, tonnageKg } = args;
   const {
     navigate,
     pushBackground = defaultPushBackground,
@@ -90,5 +89,5 @@ export async function completeWorkout(
   // background.
   markJustFinished({ workoutId, tonnageKg });
   navigate("/history"); // Back must not restart a workout
-  pushBackground(userId, email);
+  pushBackground(userId);
 }

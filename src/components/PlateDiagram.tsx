@@ -46,13 +46,14 @@ export function PlateDiagram({
   const plates = platesPerSide(totalKg, barKg, useGymPlates());
   const perSide = (totalKg - barKg) / 2;
 
+  // Plates stack outward from the sleeve: each starts where the last ended.
+  const placed: { p: number; i: number; at: number; w: number; h: number }[] = [];
   let x = LOAD_X;
-  const placed = (plates ?? []).map((p, i) => {
+  for (const [i, p] of (plates ?? []).entries()) {
     const size = PLATE_SIZE[p] ?? { w: 8, h: 40 };
-    const at = x;
+    placed.push({ p, i, at: x, ...size });
     x += size.w + 2;
-    return { p, i, at, ...size };
-  });
+  }
   const collarX = x + 1;
   const width = Math.max(MIN_W, collarX + 40);
 

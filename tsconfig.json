@@ -40,6 +40,8 @@
   ],
   "exclude": [
     "node_modules",
-    "custom-worker.ts"
+    "custom-worker.ts",
+    "test/integration",
+    "vitest.integration.config.mts"
   ]
 }

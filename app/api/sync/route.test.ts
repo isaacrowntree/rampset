@@ -7,12 +7,19 @@ const journal = {
   pull: vi.fn(async (since: number) => ({ ops: [], seq: since, epoch: "e1" })),
   opsByKind: vi.fn(),
 };
-const journalFor = vi.fn((email: string) => (email ? journal : null));
-vi.mock("@/server/journal", () => ({ journalFor: (e: string) => journalFor(e) }));
+const journalFor = vi.fn((userId: string) => (userId ? journal : null));
+vi.mock("@/server/journal", () => ({ journalFor: (id: string) => journalFor(id) }));
+
+/** The session is the identity: a request carrying ME's cookie is u_me. */
+const ME = { cookie: "session=me" };
+vi.mock("@/server/auth/deps", () => ({
+  requireAccount: async (req: Request) =>
+    req.headers.get("cookie") === ME.cookie
+      ? "u_me"
+      : Response.json({ error: "Not signed in" }, { status: 401 }),
+}));
 
 const { POST, GET } = await import("./route");
-
-const ME = { "cf-access-authenticated-user-email": "Lifter@Example.com" };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -40,10 +47,31 @@ describe("sync route", () => {
     expect(journal.pull).toHaveBeenLastCalledWith(0, true);
   });
 
-  it("refuses a request with no Access identity", async () => {
+  it("files everything under the session's account", async () => {
+    await GET(new Request("https://app/api/sync?since=0", { headers: ME }));
+    expect(journalFor).toHaveBeenCalledWith("u_me");
+  });
+
+  it("refuses a request that isn't signed in", async () => {
     const res = await GET(new Request("https://app/api/sync?since=0"));
     expect(res.status).toBe(401);
     expect(journal.pull).not.toHaveBeenCalled();
+  });
+
+  // A refused push would be refused forever — the client always sends its
+  // whole outbox. Take what fits; the client drains what was stored and
+  // sends the rest next time.
+  it("takes the first batch of a big backlog, not none of it", async () => {
+    const ops = Array.from({ length: 250 }, (_, i) => ({ opId: `o${i}`, kind: "finishedWorkout", payload: {} }));
+    await POST(new Request("https://app/api/sync", { method: "POST", headers: ME, body: JSON.stringify({ ops }) }));
+    expect(journal.push).toHaveBeenCalledWith(ops.slice(0, 100));
+  });
+
+  it("keeps a batch under the byte budget, but always takes at least one op", async () => {
+    const big = "x".repeat(600_000);
+    const ops = [0, 1, 2].map((i) => ({ opId: `o${i}`, kind: "finishedWorkout", payload: { big } }));
+    await POST(new Request("https://app/api/sync", { method: "POST", headers: ME, body: JSON.stringify({ ops }) }));
+    expect(journal.push).toHaveBeenLastCalledWith(ops.slice(0, 1));
   });
 
   it("answers 503 when sync isn't configured", async () => {

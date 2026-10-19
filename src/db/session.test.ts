@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "./db";
-import { seedIfEmpty } from "./seed";
+import { seedIfEmpty } from "@/test/seed";
 
 const USER1 = "user-1"; // fiveByFive template (program mode)
 const USER2 = "user-2"; // routine template

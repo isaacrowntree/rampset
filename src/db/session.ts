@@ -367,6 +367,16 @@ export async function finishWorkout(workoutId: string): Promise<void> {
   await advanceLinearProgression(program, workout, sets);
 }
 
+/** Everything an edit could change on a finished workout — its sets as
+ * logged, its note, its body weight. Equal signatures: nothing to save. */
+export async function workoutSignature(workoutId: string): Promise<string> {
+  const w = await db.workouts.get(workoutId);
+  const sets = (await db.sets.where({ workoutId }).toArray())
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((s) => [s.id, s.reps, s.weightKg, s.seconds, s.note]);
+  return JSON.stringify([w?.notes ?? "", w?.bodyWeightKg ?? null, sets]);
+}
+
 /** Save edits to a workout that's already finished — reopened from History
  * in the workout screen. Its date and endTs stay put: it's the same session,
  * corrected, not a new one.
@@ -376,14 +386,17 @@ export async function finishWorkout(workoutId: string): Promise<void> {
  * re-running it is idempotent and picks up a workout finished too early;
  * for an older workout it would instead clobber any weight edited since.
  * Madcow's bump is relative to the current top, so re-running it would
- * advance twice — it's left alone. */
-export async function saveFinishedWorkout(workoutId: string): Promise<void> {
+ * advance twice — it's left alone.
+ *
+ * Returns whether progression was recomputed — the edit's sync op carries
+ * working weights only then. */
+export async function saveFinishedWorkout(workoutId: string): Promise<boolean> {
   const workout = await db.workouts.get(workoutId);
-  if (!workout || workout.endTs === undefined || !workout.programDayId) return;
+  if (!workout || workout.endTs === undefined || !workout.programDayId) return false;
 
   const day = await db.programDays.get(workout.programDayId);
   const program = day ? await db.programs.get(day.programId) : undefined;
-  if (!program || program.mode !== "progression") return;
+  if (!program || program.mode !== "progression") return false;
 
   const dayIds = new Set(
     (await db.programDays.where({ programId: program.id }).toArray()).map((d) => d.id),
@@ -392,10 +405,11 @@ export async function saveFinishedWorkout(workoutId: string): Promise<void> {
     .filter((w) => w.endTs !== undefined && w.programDayId && dayIds.has(w.programDayId))
     .sort((a, b) => (a.startTs ?? 0) - (b.startTs ?? 0))
     .at(-1);
-  if (latest?.id !== workoutId) return;
+  if (latest?.id !== workoutId) return false;
 
   const sets = await db.sets.where({ workoutId }).toArray();
   await advanceLinearProgression(program, workout, sets);
+  return true;
 }
 
 /** Program-mode progression for one finished workout: advance (or hold, or

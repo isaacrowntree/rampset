@@ -9,9 +9,11 @@ SL regime alignment (warmup protocol incl. floor pulls + empty-bar sets,
 fail rest 5:00, configurable success rest, deload after 3 fails) · rest
 timer (wall-clock, bell + vibration) · body-weight carry-forward · R2
 snapshots (auto after finish, auto-restore on fresh devices) · per-user
-SyncJournal Durable Object (offline outbox, pull-on-load) · Access identity
-scoping + runtime user config via worker secret · Liquid Glass UI ·
-PWA (icons, SW, wake lock) · 134 tests.
+SyncJournal Durable Object (offline outbox, pull-on-load) · accounts: passkeys
++ email recovery in an Auth Durable Object, open sign-up, edits that sync ·
+CSV import (StrongLifts, Strong) and backup restore across accounts · custom
+routine editor · Liquid Glass UI · PWA (icons, SW, wake lock; offline cold
+start) · Playwright end-to-end suite across online/offline/flappy/slow.
 
 ## 1 — React modernization ("you might not need an effect")
 

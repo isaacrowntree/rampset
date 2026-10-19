@@ -12,15 +12,15 @@
 import { backupToCloud } from "./cloudBackup";
 
 let timer: ReturnType<typeof setTimeout> | null = null;
-let pending: { userId: string; email: string } | null = null;
+let pending: string | null = null;
 
-export function scheduleBackup(userId: string, email: string, delayMs = 4000): void {
-  pending = { userId, email };
+export function scheduleBackup(userId: string, delayMs = 4000): void {
+  pending = userId;
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     const p = pending;
     pending = null;
     timer = null;
-    if (p) void backupToCloud(p.userId, p.email).catch(() => {});
+    if (p) void backupToCloud(p).catch(() => {});
   }, delayMs);
 }

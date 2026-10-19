@@ -1,116 +1,74 @@
-"use client";
+/** Test fixture: the two lifters the engine specs were written against, seeded
+ * the way the app used to seed them from config. Production seeds a single
+ * account from a program template (src/db/account.ts); these fixed rows (5×5
+ * A/B with known weights, and a 3-day routine) are what the specs assert. */
 
-/** First-run seed. Identities come from config (env), never from code —
- * the repo carries only generic program templates. */
-
-import { db } from "./db";
+import { db } from "@/db/db";
 
 function slug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
-import {
-  loadUserConfig,
-  themeForConfig,
-  type UserConfig,
-  type FiveByFiveSlot,
-} from "@/config/users";
 import type { Exercise, ProgramExercise } from "@/lib/types";
 
-/** Bring an already-seeded device in line with the current config:
- * identity fields update in place (a device seeded by a build with
- * placeholder config heals itself), missing users are seeded fresh, and
- * working weights follow config ONLY while the user has no workout history. */
-/** One-time correction: pull-ups, chin-ups and dips shipped in the 5×5 seed
- * auto-progressing at the default +2.5kg/session — far too fast for bodyweight
- * accessories, so they'd stall and deload constantly. Flip them to manual, but
- * ONLY where they're still at that wrong default (never overriding a weight the
- * lifter set themselves), and only once (guarded), so a later manual choice of
- * +2.5 isn't undone on the next launch. */
-async function fixAccessoryProgression(userId: string): Promise<void> {
-  const flagKey = `fix:accessoriesManual:v1:${userId}`;
-  if (await db.settings.get(flagKey)) return;
-  const exIds = ["dips", "pullups", "chinups"].map((s) => `ex-${userId}-${s}`);
-  const pes = await db.programExercises.where("exerciseId").anyOf(exIds).toArray();
-  for (const pe of pes) {
-    if (pe.incrementKg === 2.5) {
-      await db.programExercises.update(pe.id, { incrementKg: 0 });
-    }
-  }
-  await db.settings.put({ key: flagKey, value: true });
+export type FiveByFiveSlot =
+  | "squatA"
+  | "bench"
+  | "row"
+  | "dips"
+  | "squatB"
+  | "ohp"
+  | "deadlift"
+  | "pullups"
+  | "chinups";
+
+export interface UserConfig {
+  id: string;
+  name: string;
+  email: string;
+  accent: "blue" | "green";
+  unit: "kg" | "lb";
+  template: "fiveByFive" | "routine";
+  theme?: "dark" | "light";
+  /** fiveByFive only: starting working weights (kg) per slot. */
+  workingWeights?: Partial<Record<FiveByFiveSlot, number>>;
 }
 
-export async function reconcileUsers(config: UserConfig[]): Promise<void> {
-  for (const cfg of config) {
-    await fixAccessoryProgression(cfg.id);
-    const existing = await db.users.get(cfg.id);
-    if (!existing) {
-      await db.transaction(
-        "rw",
-        [db.users, db.exercises, db.programs, db.programDays, db.programExercises],
-        async () => {
-          await db.users.add({
-            id: cfg.id,
-            email: cfg.email,
-            name: cfg.name,
-            accent: cfg.accent,
-            unit: cfg.unit,
-            theme: themeForConfig(cfg),
-          });
-          if (cfg.template === "fiveByFive") await seedFiveByFive(cfg);
-          else await seedRoutine(cfg);
-        },
-      );
-      continue;
-    }
-
-    const theme = themeForConfig(cfg);
-    if (
-      existing.name !== cfg.name ||
-      existing.email !== cfg.email ||
-      existing.accent !== cfg.accent ||
-      existing.unit !== cfg.unit ||
-      existing.theme !== theme
-    ) {
-      await db.users.update(cfg.id, {
-        name: cfg.name,
-        email: cfg.email,
-        accent: cfg.accent,
-        unit: cfg.unit,
-        theme,
-      });
-    }
-
-    // Weights: config is only authoritative before any training happens.
-    if (cfg.template === "fiveByFive" && cfg.workingWeights) {
-      const workoutCount = await db.workouts.where({ userId: cfg.id }).count();
-      if (workoutCount > 0) continue;
-      const slotByDayPosition: Record<string, FiveByFiveSlot> = {
-        [`day-5x5-a-${cfg.id}#0`]: "squatA",
-        [`day-5x5-a-${cfg.id}#1`]: "bench",
-        [`day-5x5-a-${cfg.id}#2`]: "row",
-        [`day-5x5-a-${cfg.id}#3`]: "dips",
-        [`day-5x5-b-${cfg.id}#0`]: "squatB",
-        [`day-5x5-b-${cfg.id}#1`]: "ohp",
-        [`day-5x5-b-${cfg.id}#2`]: "deadlift",
-        [`day-5x5-b-${cfg.id}#3`]: "pullups",
-        [`day-5x5-b-${cfg.id}#4`]: "chinups",
-      };
-      for (const dayId of [`day-5x5-a-${cfg.id}`, `day-5x5-b-${cfg.id}`]) {
-        const pes = await db.programExercises.where({ programDayId: dayId }).toArray();
-        for (const pe of pes) {
-          const slot = slotByDayPosition[`${dayId}#${pe.position}`];
-          const w = slot ? cfg.workingWeights[slot] : undefined;
-          if (w !== undefined && pe.workingWeightKg !== w) {
-            await db.programExercises.update(pe.id, { workingWeightKg: w });
-          }
-        }
-      }
-    }
-  }
+function themeForConfig(cfg: UserConfig): "dark" | "light" {
+  return cfg.theme ?? (cfg.template === "routine" ? "light" : "dark");
 }
 
-export async function seedIfEmpty(config?: UserConfig[]): Promise<void> {
-  const users = config ?? loadUserConfig();
+export const TEST_USERS: UserConfig[] = [
+  {
+    id: "user-1",
+    name: "Lifter One",
+    email: "lifter-one@example.com",
+    accent: "blue",
+    unit: "kg",
+    template: "fiveByFive",
+    workingWeights: {
+      squatA: 25,
+      bench: 62.5,
+      row: 80,
+      dips: 2.5,
+      squatB: 27.5,
+      ohp: 40,
+      deadlift: 120,
+      pullups: -2.5,
+      chinups: -2.5,
+    },
+  },
+  {
+    id: "user-2",
+    name: "Lifter Two",
+    email: "lifter-two@example.com",
+    accent: "green",
+    unit: "kg",
+    template: "routine",
+  },
+];
+
+export async function seedIfEmpty(config: UserConfig[] = TEST_USERS): Promise<void> {
+  const users = config;
   await db.transaction(
     "rw",
     [db.users, db.exercises, db.programs, db.programDays, db.programExercises],

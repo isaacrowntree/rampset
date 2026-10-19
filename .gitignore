@@ -8,6 +8,10 @@ next-env.d.ts
 # cloudflare / opennext
 .open-next/
 .wrangler/
+
+# playwright
+test-results/
+playwright-report/
 .dev.vars*
 
 # personal data — never committed

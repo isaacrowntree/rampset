@@ -8,25 +8,30 @@ tested, keep it honest.
 
 ```bash
 npm install
-cp .env.example .env.local   # add a lifter or two
-npm run dev                  # http://localhost:3000
+npm run dev                  # http://localhost:3000 — device-only, no accounts
+npm run preview              # http://localhost:8787 — the real worker: passkeys, sync
 ```
 
 ## The workflow
 
-Everything is test-driven, and the checks that run in CI are the ones to run
-locally before you push:
+Test-first, and integration-first: a change starts as a failing test of what
+a lifter would see, and the end-to-end suite is the one that proves it.
 
 ```bash
-npm test          # vitest — engines, store, sync, components
-npm run typecheck # tsc --noEmit
-npm run lint      # eslint (flat config)
+npm run test:e2e         # Playwright — the whole app against the built worker
+npm run test:integration # the Auth Durable Object on real workerd SQLite
+npm test                 # vitest — engines, store, sync, components
+npm run typecheck        # tsc --noEmit
+npm run lint             # eslint (flat config)
 ```
 
+- **Journeys live in `e2e/`.** Each phone is a browser context with its own
+  virtual passkey authenticator (`e2e/fixtures.ts`); `e2e/network.ts` puts it
+  online, offline, on a flappy connection or a slow one. Nothing is mocked:
+  Durable Objects, R2, rate limits and email run locally under `wrangler dev`.
 - **The engines are the heart of it.** Progression, deload, Madcow ramps,
   routine prefill, plate math, e1RM, and PR detection live as pure functions in
-  `src/lib/`, each with a `.test.ts` beside it. Changing behaviour? Write a
-  failing test first, then make it pass.
+  `src/lib/`, each with a `.test.ts` beside it — dense logic earns unit tests.
 - **New programs are data**, not code — add them to
   `src/lib/programTemplates.ts` and they show up in the picker automatically.
 - **UI** follows the existing components: OLED + IWF-plate palette, per-user
@@ -35,7 +40,7 @@ npm run lint      # eslint (flat config)
 ## Pull requests
 
 - Keep PRs focused; one change per PR.
-- All three checks (`test`, `typecheck`, `lint`) must pass — CI enforces them.
+- Every check above must pass — CI runs them all, end-to-end included.
 - Describe what changed and why. If it changes training behaviour, say what a
   test now proves.
 

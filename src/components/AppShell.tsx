@@ -2,7 +2,8 @@
 
 import { type ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { UserProvider } from "@/state/UserContext";
+import { UserProvider, useUser } from "@/state/UserContext";
+import { Onboarding } from "./account/Onboarding";
 import { BottomNav } from "./BottomNav";
 import { SyncEngine } from "./SyncEngine";
 
@@ -17,7 +18,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const { user, ready } = useUser();
   const isWorkout = pathname?.startsWith("/workout");
+
+  // A device without an account has nothing to show yet.
+  if (ready && !user) return <Onboarding />;
 
   // The shell renders immediately — pages show their skeletons while the
   // provider boots. No full-screen spinner, no blank frames.

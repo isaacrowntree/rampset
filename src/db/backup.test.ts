@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "./db";
-import { seedIfEmpty } from "./seed";
-import { exportBackup, restoreBackup } from "./backup";
+import { seedIfEmpty } from "@/test/seed";
+import { exportBackup, moveBackup, restoreBackup } from "./backup";
 
 const USER1 = "user-1";
 const USER2 = "user-2";
@@ -56,19 +56,54 @@ describe("restoreBackup", () => {
     expect(await db.programs.where({ userId: USER1 }).count()).toBeGreaterThan(0);
   });
 
-  // The file says user-1; the active user is user-2. Today restoreBackup
-  // never looks at data.userId: it wipes the ACTIVE user's rows, then
-  // bulkAdds the file's rows verbatim — still stamped user-1, so no query
-  // ever reads them again — and returns a success summary. Total silent loss.
-  it("refuses a backup belonging to a different user, leaving data intact", async () => {
+  // The re-seed path: a backup from an old account restored into a new one.
+  // Rows are written verbatim and every query is scoped by userId, so the
+  // file must be re-homed — restored as-is, nothing could ever read it.
+  it("moves a backup from another account onto this one", async () => {
+    await db.workouts.add({
+      id: "w1", userId: USER1, dayLabel: "Workout A", date: "2026-01-01",
+      programDayId: "day-5x5-a-user-1", prescribedSets: { "ex-user-1-squat": 5 },
+    });
+    await db.sets.add({
+      id: "s1", workoutId: "w1", userId: USER1, exerciseId: "ex-user-1-squat",
+      setIndex: 0, weightKg: 100, reps: 5, isWarmup: false,
+    });
+    const json = await exportBackup(USER1);
+
+    // A brand-new account on a fresh device.
+    await db.delete();
+    await db.open();
+    const summary = await restoreBackup("u_new", json);
+    expect(summary.workouts).toBe(1);
+
+    const [w] = await db.workouts.where({ userId: "u_new" }).toArray();
+    expect(w).toMatchObject({ programDayId: "day-5x5-a-u_new", prescribedSets: { "ex-u_new-squat": 5 } });
+    const [set] = await db.sets.where({ userId: "u_new" }).toArray();
+    expect(await db.exercises.get(set.exerciseId)).toMatchObject({ name: "Squat", userId: "u_new" });
+    expect(await db.programs.where({ userId: "u_new" }).count()).toBe(1);
+    expect(await db.programExercises.get("pe-day-5x5-a-u_new-0")).toBeDefined();
+    // Nothing is left stamped with the old owner.
+    expect(JSON.stringify(await db.sets.toArray())).not.toContain("user-1");
+  });
+
+  it("replaces the destination account's own rows rather than mixing them in", async () => {
     await giveUser2History();
-    const json = await foreignBackupJson();
-
-    await expect(restoreBackup(USER2, json)).rejects.toThrow(/different user/i);
-
-    // user-2's history survived the refusal.
-    expect(await db.workouts.where({ userId: USER2 }).count()).toBe(1);
-    // and nothing grafted itself in under user-1's name.
+    await restoreBackup(USER2, await foreignBackupJson());
+    expect(await db.workouts.get("w-user2-only")).toBeUndefined();
     expect(await db.workouts.where({ userId: USER1 }).count()).toBe(0);
+  });
+});
+
+describe("moveBackup", () => {
+  it("rewrites the owner only as a whole id segment", () => {
+    const moved = moveBackup(
+      {
+        format: "liftlog-backup", version: 1, exportedAt: "", userId: "user-1",
+        exercises: [{ id: "ex-user-1-squat", userId: "user-1" }, { id: "ex-user-10-squat", userId: "user-10" }],
+        programs: [], programDays: [], programExercises: [], workouts: [], sets: [],
+      },
+      "u_new",
+    );
+    expect(moved.exercises.map((e) => (e as { id: string }).id)).toEqual(["ex-u_new-squat", "ex-user-10-squat"]);
   });
 });

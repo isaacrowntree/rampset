@@ -10,6 +10,7 @@ import {
   setWorkoutNote,
   saveFinishedWorkout,
   buildEditSession,
+  workoutSignature,
   type Session,
 } from "@/db/session";
 import { db } from "@/db/db";
@@ -25,6 +26,7 @@ import { activeWorkoutKey } from "@/db/activeWorkout";
 import { completeWorkout } from "@/lib/finishFlow";
 import { sessionTonnageKg, workSetCount } from "@/lib/workoutStats";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
+import { enqueueEditedWorkout } from "@/db/sync";
 
 export default function WorkoutPage() {
   return (
@@ -49,6 +51,8 @@ function WorkoutScreen() {
     tonnageKg: number;
   } | null>(null);
   const finishing = useRef(false);
+  /** The past workout as it was when opened for editing. */
+  const editBaseline = useRef<string | null>(null);
   /** Set before any router.replace out of this screen, so the confirm sheet
    * doesn't also pop a history entry the router already consumed. */
   const navigatingAway = useRef(false);
@@ -66,8 +70,7 @@ function WorkoutScreen() {
     screenRef,
     () => {
       if (!editId) router.push("/");
-      else if (window.history.length > 1) router.back();
-      else router.replace("/history");
+      else void saveEdit();
     },
     session !== null && !confirmingFinish && !confirmingDiscard && !noteOpen,
   );
@@ -89,6 +92,7 @@ function WorkoutScreen() {
           return;
         }
         const s = await buildEditSession(past);
+        editBaseline.current = await workoutSignature(past.id);
         if (!cancelled) setSession(s);
         return;
       }
@@ -154,7 +158,7 @@ function WorkoutScreen() {
       // Local commit + congrats + navigation happen instantly; sync/backup are
       // fired detached, so a slow connection can't freeze the Finish flow.
       await completeWorkout(
-        { userId: user.id, email: user.email, workoutId: session.workout.id, workSets, tonnageKg },
+        { userId: user.id, workoutId: session.workout.id, workSets, tonnageKg },
         {
           navigate: (path) => {
             navigatingAway.current = true;
@@ -172,20 +176,27 @@ function WorkoutScreen() {
 
   /** Edit mode's Finish: the sets are already saved as they're logged, so
    * this just settles progression and backs up. */
-  const saveEdit = async () => {
-    if (finishing.current) return;
+  /** Every way out of editing — Save, Back, pulling down — keeps what was
+   * logged, so every way out saves it: to progression, and to every phone.
+   * Leaving without a change sends nothing. */
+  async function saveEdit() {
+    if (finishing.current || !session || !user) return;
     finishing.current = true;
     // No timer.stop(): edit mode never starts one, and the rest running is
     // the in-progress workout's, not this one's.
     try {
-      await saveFinishedWorkout(session.workout.id);
-      scheduleBackup(user.id, user.email);
+      if ((await workoutSignature(session.workout.id)) !== editBaseline.current) {
+        const recomputed = await saveFinishedWorkout(session.workout.id);
+        // The correction goes to every phone, not just the next new one.
+        await enqueueEditedWorkout(user.id, session.workout.id, recomputed).catch(() => {});
+        scheduleBackup(user.id);
+      }
       navigatingAway.current = true;
       leaveEdit();
     } finally {
       finishing.current = false;
     }
-  };
+  }
 
   /** Back out of editing a past workout to History — popping the entry
    * History pushed, or (deep-linked, nothing behind) replacing it. */
@@ -248,7 +259,7 @@ function WorkoutScreen() {
     <div ref={screenRef} className="bg-oled pb-[calc(env(safe-area-inset-bottom)+132px)]">
       <header className="nav-inline sticky top-0 z-40 -mx-4 mb-2 flex items-center gap-1 px-2 pb-1.5 pt-[max(env(safe-area-inset-top),8px)]">
         <button
-          onClick={editId ? leaveEdit : minimize}
+          onClick={editId ? () => void saveEdit() : minimize}
           aria-label={
             editId ? "Back — logged changes are kept" : "Minimize workout — your progress is kept"
           }

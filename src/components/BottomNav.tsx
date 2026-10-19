@@ -101,9 +101,15 @@ export function BottomNav() {
  */
 function useMinimizeOnScroll(pathname: string) {
   const [minimized, setMinimized] = useState(false);
+  // A fresh tab always starts expanded: reset during render when the tab
+  // changes, rather than rendering collapsed once and correcting in an effect.
+  const [shownFor, setShownFor] = useState(pathname);
+  if (shownFor !== pathname) {
+    setShownFor(pathname);
+    setMinimized(false);
+  }
 
   useEffect(() => {
-    setMinimized(false); // a fresh tab always starts expanded
     let lastY = window.scrollY;
     let ticking = false;
 

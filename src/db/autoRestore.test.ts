@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "./db";
-import { seedIfEmpty } from "./seed";
+import { seedIfEmpty } from "@/test/seed";
 import { startWorkout, logSet, finishWorkout } from "./session";
 import { exportBackup } from "./backup";
 import { autoRestoreIfEmpty } from "./autoRestore";

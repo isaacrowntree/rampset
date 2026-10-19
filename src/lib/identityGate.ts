@@ -1,23 +1,22 @@
 "use client";
 
-/** Guards writes that leave this device against the identity they'll be
- * filed under.
+/** Guards writes that leave this device against the account they'll be filed
+ * under.
  *
- * `/api/sync` and `/api/backup` are both routed by the server-side Cloudflare
- * Access email, but the rows they carry belong to whichever avatar is selected
- * here — and the switcher is one tap away. Finish a workout as someone else and
- * their workouts land in YOUR journal; back up as someone else and their whole
- * database overwrites YOUR latest.json.
- *
- * The two identities can't be reconciled client-side, so the honest move is to
- * refuse to write when they disagree. */
+ * `/api/sync` and `/api/backup` file everything under the session cookie's
+ * account, while the rows they carry belong to this device's local user. Those
+ * are the same account by construction — the device adopts the account it
+ * signs in as — but the cookie can change underneath us (signed out in another
+ * tab, a session revoked by recovery, a stale device). Pushing then would file
+ * this device's workouts under someone else, permanently, in an append-only
+ * log. So writes go out only for the account the server last confirmed. */
 
-/** The last identity we actually resolved. Survives reloads because the
- * identity changes almost never, while the request that reveals it fails
- * routinely — /api/me has a 2s timeout and a cold mobile network blows it. */
-const CACHE_KEY = "liftlog.accessIdentity";
+/** The last account the server confirmed. Survives reloads because it changes
+ * almost never, while the request that confirms it fails routinely — a cold
+ * mobile network in a gym. */
+const CACHE_KEY = "liftlog.sessionAccount";
 
-let accessEmail: string | null = null;
+let confirmed: string | null = remembered();
 
 function remembered(): string | null {
   if (typeof localStorage === "undefined") return null;
@@ -28,26 +27,20 @@ function remembered(): string | null {
   }
 }
 
-/** Called once identity resolves (or doesn't) — see UserContext. */
-export function setAccessIdentity(email: string | null): void {
-  if (email) {
-    accessEmail = email;
-    try {
-      localStorage?.setItem(CACHE_KEY, email);
-    } catch {
-      // private mode — we just re-resolve next launch
-    }
-    return;
+/** What the session check found: an account id, null for signed out, or
+ * undefined when it couldn't tell (offline) — which changes nothing. */
+export function setSessionAccount(userId: string | null | undefined): void {
+  if (userId === undefined) return;
+  confirmed = userId;
+  try {
+    if (userId) localStorage.setItem(CACHE_KEY, userId);
+    else localStorage.removeItem(CACHE_KEY);
+  } catch {
+    // private mode — we just re-confirm next launch
   }
-  // Unresolved this launch. Fall back to whoever we last resolved rather than
-  // opening the gate: a flaky request is not evidence that the user changed.
-  accessEmail = remembered();
 }
 
-/** May we file `email`'s data under the current Access session? */
-export function mayWriteAs(email: string): boolean {
-  // Only a device that has NEVER resolved an identity gets the benefit of the
-  // doubt. Once we've seen one, a failed /api/me falls back to it instead.
-  if (accessEmail === null) return true;
-  return accessEmail.toLowerCase() === email.toLowerCase();
+/** May we send `userId`'s data under the current session? */
+export function mayWriteAs(userId: string): boolean {
+  return confirmed === userId;
 }

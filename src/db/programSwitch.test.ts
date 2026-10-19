@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "./db";
-import { seedIfEmpty } from "./seed";
+import { seedIfEmpty } from "@/test/seed";
 import { startWorkout, logSet, finishWorkout, buildSessionPlan } from "./session";
 import {
   switchProgram,
@@ -161,7 +161,8 @@ describe("PROGRAM_TEMPLATES registry", () => {
       expect(t.days.length).toBeGreaterThan(0);
       for (const d of t.days) {
         expect(d.key).toBeTruthy();
-        expect(d.exercises.length).toBeGreaterThan(0);
+        // A custom routine starts empty; every guided program prescribes.
+        if (t.mode !== "routine") expect(d.exercises.length).toBeGreaterThan(0);
         for (const e of d.exercises) {
           expect(e.name).toBeTruthy();
           expect(e.sets).toBeGreaterThan(0);

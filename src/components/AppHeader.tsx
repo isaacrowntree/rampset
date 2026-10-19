@@ -1,11 +1,14 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useUser } from "@/state/UserContext";
-import { AvatarSwitcher } from "./AvatarSwitcher";
 
 export function AppHeader({ title, sub }: { title?: string; sub?: string }) {
-  const { user, users, switchUser } = useUser();
+  const { user, session } = useUser();
+  const signedOut = session === "signed-out";
+  const pathname = usePathname();
   const titleRef = useRef<HTMLHeadingElement>(null);
   // UIKit's collapsing large title: once it scrolls under the status bar, a
   // compact title fades in on a blurred bar. An observer, not a scroll
@@ -54,9 +57,20 @@ export function AppHeader({ title, sub }: { title?: string; sub?: string }) {
           )}
           {sub && <p className="mt-1.5 text-[15px] text-ink-faint">{sub}</p>}
         </div>
-        <div className="flex-none">
-          <AvatarSwitcher user={user} users={users} onSwitch={switchUser} />
-        </div>
+        {/* The device's one account; its controls live in Settings. */}
+        <Link
+          href="/settings"
+          aria-current={pathname === "/settings" ? "page" : undefined}
+          aria-label={`Account settings (${user?.name ?? ""})${signedOut ? " — signed out, sync paused" : ""}`}
+          className="disp relative flex h-11 w-11 flex-none items-center justify-center rounded-full text-[15px] text-white"
+          style={{ backgroundColor: user?.accent === "green" ? "var(--plate-10)" : "var(--plate-20)" }}
+        >
+          {user?.name[0]?.toUpperCase() ?? ""}
+          {/* Sync is paused, and it's only otherwise visible in Settings. */}
+          {signedOut && (
+            <span aria-hidden className="absolute right-0 top-0 h-2.5 w-2.5 rounded-full bg-plate-25 ring-2 ring-[var(--oled)]" />
+          )}
+        </Link>
       </header>
     </>
   );

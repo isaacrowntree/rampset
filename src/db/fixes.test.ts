@@ -3,7 +3,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import "fake-indexeddb/auto";
 import { db } from "./db";
-import { seedIfEmpty } from "./seed";
+import { seedIfEmpty } from "@/test/seed";
 import {
   startWorkout,
   logSet,

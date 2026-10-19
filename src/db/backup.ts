@@ -51,22 +51,18 @@ export async function exportBackup(userId: string): Promise<string> {
   return JSON.stringify(backup);
 }
 
-/** Replaces ALL of the user's data with the backup's contents. */
+/** Replaces ALL of the user's data with the backup's contents. A backup made
+ * under another account — an old device, a previous account — is moved onto
+ * this one (see moveBackup). */
 export async function restoreBackup(
   userId: string,
   json: string,
 ): Promise<RestoreSummary> {
-  const data = JSON.parse(json) as BackupFile;
-  if (data.format !== "liftlog-backup" || data.version !== 1) {
-    throw new Error("Not a LiftLog backup file");
+  const parsed = JSON.parse(json) as BackupFile;
+  if (parsed.format !== "liftlog-backup" || parsed.version !== 1) {
+    throw new Error("Not a Rampset backup file");
   }
-  // The rows below are written verbatim, keeping the userId they were
-  // exported with. Restoring someone else's file would therefore wipe THIS
-  // user's history and replace it with rows no query can ever read again —
-  // and report success. Refuse instead.
-  if (data.userId !== userId) {
-    throw new Error("This backup belongs to a different user");
-  }
+  const data = parsed.userId === userId ? parsed : moveBackup(parsed, userId);
 
   await db.transaction(
     "rw",
@@ -102,5 +98,50 @@ export async function restoreBackup(
     workouts: data.workouts.length,
     sets: data.sets.length,
     exercises: data.exercises.length,
+  };
+}
+
+/** Fields that hold a row id or point at one. */
+const ID_FIELDS = ["id", "userId", "exerciseId", "programId", "programDayId", "workoutId"] as const;
+
+/** Re-home a backup onto another account.
+ *
+ * Rows are written verbatim, and every query is scoped by userId — so a file
+ * restored under its old owner's id would wipe this account's history and
+ * replace it with rows nothing can ever read. Rewrite the owner instead.
+ *
+ * Seeded and template ids embed the owner (`ex-<user>-squat`,
+ * `day-5x5-a-<user>`, `pe-day-5x5-a-<user>-0`), and a second device rebuilds
+ * exactly those ids for synced ops to land on, so those are rewritten too:
+ * the owner as a whole `-`-delimited segment, never a substring of another
+ * (`user-1` must not touch `user-10`). Random ids carry no owner and stay. */
+export function moveBackup(data: BackupFile, toUserId: string): BackupFile {
+  const from = data.userId;
+  const segment = new RegExp(`-${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|-)`, "g");
+  const move = (v: unknown) =>
+    typeof v !== "string" ? v : v === from ? toUserId : v.replace(segment, `-${toUserId}`);
+
+  const rows = (list: unknown[]) =>
+    list.map((row) => {
+      const r = { ...(row as Record<string, unknown>) };
+      for (const f of ID_FIELDS) if (f in r) r[f] = move(r[f]);
+      // Workouts key their prescription by exercise id.
+      if (r.prescribedSets && typeof r.prescribedSets === "object") {
+        r.prescribedSets = Object.fromEntries(
+          Object.entries(r.prescribedSets as Record<string, number>).map(([k, n]) => [move(k), n]),
+        );
+      }
+      return r;
+    });
+
+  return {
+    ...data,
+    userId: toUserId,
+    exercises: rows(data.exercises),
+    programs: rows(data.programs),
+    programDays: rows(data.programDays),
+    programExercises: rows(data.programExercises),
+    workouts: rows(data.workouts),
+    sets: rows(data.sets),
   };
 }
