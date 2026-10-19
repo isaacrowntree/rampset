@@ -30,7 +30,8 @@ test("Silvana builds her own routine, and it follows her to her other phone", as
   // Home leads with her first day, in her order.
   await p.page.getByRole("navigation").getByRole("link", { name: "Home" }).click();
   await expect(p.page.getByRole("link", { name: "Start Glutes" })).toBeVisible();
-  await expect(p.page.getByRole("listitem").first()).toContainText("Bulgarian split squat");
+  const nextCard = p.page.locator("section").filter({ has: p.page.getByRole("heading", { name: "Glutes" }) });
+  await expect(nextCard.getByRole("listitem").first()).toContainText("Bulgarian split squat");
 
   // The program travels by the cloud backup, which follows edits within seconds.
   await p.page.waitForResponse(

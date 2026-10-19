@@ -18,6 +18,7 @@ import type { ProgramDay, ProgramExercise, Exercise } from "@/lib/types";
 import { loadColor } from "@/lib/plates";
 import { LiftLoop, matchesLift, signatureLifts } from "@/components/LiftLoop";
 import { useGymPlates } from "@/lib/gymPlates";
+import { InstallCard } from "@/components/InstallCard";
 
 export default function HomePage() {
   const { user } = useUser();
@@ -128,6 +129,10 @@ export default function HomePage() {
           </p>
         </div>
       )}
+
+      {/* Where a new lifter lands after onboarding. Not while a workout is
+          open — Home is then a way back into it, not a place for asks. */}
+      {!active && <InstallCard />}
 
       {active && (
         <>

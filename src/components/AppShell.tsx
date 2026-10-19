@@ -6,6 +6,8 @@ import { UserProvider, useUser } from "@/state/UserContext";
 import { Onboarding } from "./account/Onboarding";
 import { BottomNav } from "./BottomNav";
 import { SyncEngine } from "./SyncEngine";
+// For its listeners: the install prompt can fire before Home ever mounts.
+import "@/lib/installPrompt";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (

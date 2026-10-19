@@ -3,10 +3,35 @@
   "short_name": "Rampset",
   "description": "Offline-first barbell strength log \u2014 guided programs, plate math, PR tracking.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
   "orientation": "portrait",
+  "categories": ["health", "fitness", "sports"],
+  "screenshots": [
+    {
+      "src": "/screenshot-home.png",
+      "sizes": "786x1318",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Your next workout, ready to start"
+    },
+    {
+      "src": "/screenshot-workout.png",
+      "sizes": "786x1318",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Log every set with a tap"
+    },
+    {
+      "src": "/screenshot-progress.png",
+      "sizes": "786x1318",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Every lift, climbing"
+    }
+  ],
   "icons": [
     {
       "src": "/icon-192.png",
