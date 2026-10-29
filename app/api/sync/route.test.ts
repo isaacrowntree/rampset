@@ -67,11 +67,36 @@ describe("sync route", () => {
     expect(journal.push).toHaveBeenCalledWith(ops.slice(0, 100));
   });
 
-  it("keeps a batch under the byte budget, but always takes at least one op", async () => {
-    const big = "x".repeat(600_000);
-    const ops = [0, 1, 2].map((i) => ({ opId: `o${i}`, kind: "finishedWorkout", payload: { big } }));
+  it("keeps a batch under the byte budget", async () => {
+    const big = "x".repeat(200_000);
+    const ops = Array.from({ length: 8 }, (_, i) => ({ opId: `o${i}`, kind: "finishedWorkout", payload: { big } }));
     await POST(new Request("https://app/api/sync", { method: "POST", headers: ME, body: JSON.stringify({ ops }) }));
-    expect(journal.push).toHaveBeenLastCalledWith(ops.slice(0, 1));
+    expect(journal.push).toHaveBeenLastCalledWith(ops.slice(0, 5));
+  });
+
+  // Too big for a journal row: storing it would fail the whole push, every
+  // time, and nothing behind it would ever sync. Left out, it stays in its
+  // own client's outbox and everything else goes through.
+  it("never stores an oversized op, and doesn't let it hold up the rest", async () => {
+    const huge = { opId: "huge", kind: "finishedWorkout", payload: { big: "é".repeat(200_000) } };
+    const ops = [huge, { opId: "a", kind: "finishedWorkout", payload: {} }];
+    await POST(new Request("https://app/api/sync", { method: "POST", headers: ME, body: JSON.stringify({ ops }) }));
+    expect(journal.push).toHaveBeenLastCalledWith([ops[1]]);
+  });
+
+  it("refuses a body past the limit, declared or not", async () => {
+    const big = "x".repeat(17 * 1024 * 1024);
+    const stream = new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(big));
+        c.close();
+      },
+    });
+    const res = await POST(
+      new Request("https://app/api/sync", { method: "POST", headers: ME, body: stream, duplex: "half" } as RequestInit),
+    );
+    expect(res.status).toBe(413);
+    expect(journal.push).not.toHaveBeenCalled();
   });
 
   it("answers 503 when sync isn't configured", async () => {

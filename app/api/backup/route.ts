@@ -5,7 +5,11 @@ import { requireAccount } from "@/server/auth/deps";
 import { journalFor } from "@/server/journal";
 import { DELETE_WORKOUT, tombstonedWorkoutIds } from "@/server/tombstones";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { readLimited } from "@/server/body";
 import {
+  BackupContendedError,
+  BackupInputError,
+  MAX_BYTES,
   storeBackup,
   fetchLatestBackup,
   type BackupBucket,
@@ -39,20 +43,24 @@ export async function POST(req: Request) {
   if (!backups) {
     return Response.json({ error: "Backup storage not configured" }, { status: 503 });
   }
+  const body = await readLimited(req, MAX_BYTES);
+  if (body === null) return Response.json({ error: "Backup too large" }, { status: 413 });
   try {
     const summary = await storeBackup(
       backups,
       userId,
-      await req.text(),
+      body,
       new Date(),
       await tombstonesFor(userId),
     );
     return Response.json({ ok: true, ...summary });
   } catch (e) {
-    return Response.json(
-      { error: e instanceof Error ? e.message : "Invalid backup" },
-      { status: 400 },
-    );
+    if (e instanceof BackupInputError) return Response.json({ error: e.message }, { status: 400 });
+    if (e instanceof BackupContendedError) return Response.json({ error: e.message }, { status: 409 });
+    // Anything else is ours (R2, the journal) — not something to show, and
+    // not the upload's fault.
+    console.error("backup failed", e instanceof Error ? e.name : typeof e);
+    return Response.json({ error: "Backup failed — try again later" }, { status: 500 });
   }
 }
 
