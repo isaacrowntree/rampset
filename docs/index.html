@@ -440,7 +440,7 @@
         <li><b>Point it at your domain.</b> <span class="dim">In <code>wrangler.jsonc</code>, change the route from <code>liftlog.zackdesign.biz</code> to your own domain. Passkeys are tied to that one origin.</span></li>
         <li><b>Deploy.</b> <span class="dim"><code>npm run deploy</code> builds with OpenNext and ships the worker with its two Durable Objects, <code>AUTH</code> and <code>SYNC_JOURNAL</code>.</span></li>
         <li><b>Cloud backups (optional).</b> <span class="dim">Create the R2 bucket that the <code>BACKUPS</code> binding points at. Leave the binding out and sync still works; Download backup still gives people a full file.</span></li>
-        <li><b>Recovery email (optional).</b> <span class="dim">Onboard a domain with <code>npx wrangler email sending enable &lt;domain&gt;</code> and set <code>EMAIL_FROM</code> to an address on it. Without it, the app doesn't offer email recovery.</span></li>
+        <li><b>Recovery email (optional).</b> <span class="dim">Onboard a domain with <code>npx wrangler email sending enable &lt;domain&gt;</code> set <code>EMAIL_FROM</code> to an address on it, and set the <code>AUTH_CODE_SECRET</code> secret (<code>openssl rand -base64 32 | npx wrangler secret put AUTH_CODE_SECRET</code>). Without both, the app doesn't offer email recovery.</span></li>
         <li><b>Bot protection (optional).</b> <span class="dim">Create a Turnstile widget and set the <code>TURNSTILE_SITE_KEY</code> var and <code>TURNSTILE_SECRET_KEY</code> secret. Sign-in, email and sync routes are already rate limited.</span></li>
       </ol>
       <div class="term" role="img" aria-label="Terminal commands: clone the repository, install, preview locally on port 8787, create the R2 bucket, and deploy">

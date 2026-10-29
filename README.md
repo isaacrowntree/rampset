@@ -103,8 +103,10 @@ Then, once deployed:
 2. Create the **R2 bucket** the `BACKUPS` binding points at (for cloud backups).
 3. **Recovery email** (optional): set `EMAIL_FROM` in `wrangler.jsonc` to an
    address on a domain onboarded to Cloudflare Email Sending
-   (`npx wrangler email sending enable <domain>`). Without it, the app simply
-   doesn't offer recovery by email.
+   (`npx wrangler email sending enable <domain>`), and set the
+   `AUTH_CODE_SECRET` secret that codes are hashed under
+   (`openssl rand -base64 32 | npx wrangler secret put AUTH_CODE_SECRET`).
+   Without both, the app simply doesn't offer recovery by email.
 4. **Bot protection** (optional): create a Turnstile widget and set the
    `TURNSTILE_SITE_KEY` var and `TURNSTILE_SECRET_KEY` secret. Sign-up and
    recovery then ask for a Turnstile check.

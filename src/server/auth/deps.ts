@@ -23,6 +23,10 @@ interface AuthEnv {
   /** The From address for codes, e.g. noreply@your-domain. Its domain must be
    * onboarded to Cloudflare Email Sending. */
   EMAIL_FROM?: string;
+  /** The key recovery codes are hashed under; 32+ characters. Email recovery
+   * stays off without it: `openssl rand -base64 32 | wrangler secret put
+   * AUTH_CODE_SECRET`. */
+  AUTH_CODE_SECRET?: string;
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
   AUTH_LIMITER?: RateLimitBinding;
@@ -46,7 +50,11 @@ export function rampsetAuth(): Auth<Profile> | null {
     cookieName: "rampset_session",
     maxNameLength: 40,
     parseProfile,
-    sendCode: e.EMAIL && e.EMAIL_FROM ? cloudflareEmail(e.EMAIL, { from: e.EMAIL_FROM, appName: "Rampset" }) : undefined,
+    sendCode:
+      e.EMAIL && e.EMAIL_FROM && e.AUTH_CODE_SECRET
+        ? cloudflareEmail(e.EMAIL, { from: e.EMAIL_FROM, appName: "Rampset" })
+        : undefined,
+    codeSecret: e.AUTH_CODE_SECRET,
     turnstile:
       e.TURNSTILE_SITE_KEY && e.TURNSTILE_SECRET_KEY
         ? { siteKey: e.TURNSTILE_SITE_KEY, verify: turnstileVerifier(e.TURNSTILE_SECRET_KEY) }

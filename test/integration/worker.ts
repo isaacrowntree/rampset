@@ -75,6 +75,7 @@ const worker = {
       parseProfile,
       webauthn,
       sendCode: async (to, code) => void sent.push({ to, code }),
+      codeSecret: "integration-code-secret-integration",
       onDeleteAccount: (userId) => deleteUserData(env as never, userId),
     });
     return (await auth.handle(req)) ?? new Response("Not found", { status: 404 });
