@@ -88,7 +88,7 @@ export function EmailCodeForm({
           onChange={(e) => setEmail(e.target.value)}
           data-selectable
         />
-        {needsToken && <Turnstile key={attempt} siteKey={turnstileSiteKey!} onToken={setToken} />}
+        {needsToken && <Turnstile key={attempt} siteKey={turnstileSiteKey!} action="recover" onToken={setToken} />}
         {error && <p role="alert" className={`px-1 ${ERROR}`}>{error}</p>}
         <button type="submit" className={PRIMARY} disabled={busy || !email.trim() || (needsToken && !token)}>
           {busy ? "Sending…" : "Send code"}

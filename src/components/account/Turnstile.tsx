@@ -35,8 +35,17 @@ function load(): Promise<void> {
 }
 
 /** `onToken` should be stable (a state setter): the widget re-renders when it
- * changes. */
-export function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (token: string | null) => void }) {
+ * changes. `action` names the form, and the server checks it, so a token
+ * solved for sign-up can't be spent on recovery. */
+export function Turnstile({
+  siteKey,
+  action,
+  onToken,
+}: {
+  siteKey: string;
+  action: "signup" | "recover";
+  onToken: (token: string | null) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   // A blocker, a captive portal or lie-fi can stop the script. Say so, or the
   // button it gates just sits there disabled.
@@ -50,6 +59,7 @@ export function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (tok
       if (cancelled || !ref.current || !window.turnstile) return;
       id = window.turnstile.render(ref.current, {
         sitekey: siteKey,
+        action,
         theme: document.documentElement.dataset.theme === "light" ? "light" : "dark",
         callback: (token: string) => onToken(token),
         "expired-callback": () => onToken(null),
@@ -60,7 +70,7 @@ export function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (tok
       cancelled = true;
       if (id) window.turnstile?.remove(id);
     };
-  }, [siteKey, onToken, tries]);
+  }, [siteKey, action, onToken, tries]);
 
   if (failed) {
     return (

@@ -338,7 +338,7 @@ function Create({
           You can switch any time in Settings — your history comes with you.
         </p>
 
-        {needsToken && <Turnstile key={attempt} siteKey={turnstileSiteKey!} onToken={setToken} />}
+        {needsToken && <Turnstile key={attempt} siteKey={turnstileSiteKey!} action="signup" onToken={setToken} />}
         {error && (
           <p role="alert" className={`mb-3 px-1 ${ERROR}`}>
             {error}

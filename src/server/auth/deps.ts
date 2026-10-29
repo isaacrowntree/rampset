@@ -58,7 +58,7 @@ export function rampsetAuth(): Auth<Profile> | null {
     codeSecret: e.AUTH_CODE_SECRET,
     turnstile:
       e.TURNSTILE_SITE_KEY && e.TURNSTILE_SECRET_KEY
-        ? { siteKey: e.TURNSTILE_SITE_KEY, verify: turnstileVerifier(e.TURNSTILE_SECRET_KEY) }
+        ? { siteKey: e.TURNSTILE_SITE_KEY, verify: turnstileVerifier(e.TURNSTILE_SECRET_KEY, { checkAction: true }) }
         : undefined,
     rateLimit: e.AUTH_LIMITER ? rateLimitBinding(e.AUTH_LIMITER) : undefined,
     waitUntil: (work) => getCloudflareContext().ctx.waitUntil(work),
