@@ -18,6 +18,7 @@ import { SyncStatusRow } from "@/components/SyncStatusRow";
 import { SegmentedControl } from "@/components/SegmentedControl";
 import { Sheet } from "@/components/Sheet";
 import { EmailCodeForm } from "@/components/account/EmailCodeForm";
+import { DevicesSheet } from "@/components/account/DevicesSheet";
 import { legacyProfiles, moveLegacyProfile, unsyncedCount, type LegacyProfile } from "@/db/account";
 import { getActiveWorkout } from "@/db/activeWorkout";
 import { enqueueWorkouts } from "@/db/sync";
@@ -35,6 +36,7 @@ import {
 export default function SettingsPage() {
   const { user, session, adopt, refresh, patchUser, leave } = useUser();
   const [signingIn, setSigningIn] = useState(false);
+  const [managingDevices, setManagingDevices] = useState(false);
   const errorRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -104,6 +106,9 @@ export default function SettingsPage() {
       // One account per device: someone else's passkey mustn't quietly
       // replace what's on this one.
       if (account.id !== user.id) {
+        // The server has already set that account's session here; end it, or
+        // this device's writes would go out under it.
+        await signOut().catch(() => {});
         showError("That passkey is for a different account. Sign out first to switch accounts.");
         return;
       }
@@ -314,6 +319,21 @@ export default function SettingsPage() {
               </span>
               <span className="block truncate text-[12.5px] text-ink-faint">
                 {user.email || "Gets you back in if you lose every device"}
+              </span>
+            </span>
+            <Chevron />
+          </button>
+        )}
+
+        {canReachAccount && (
+          <button
+            onClick={() => setManagingDevices(true)}
+            className="flex w-full items-center justify-between gap-3 border-b border-line px-4 py-3.5 text-left"
+          >
+            <span className="min-w-0">
+              <span className="block text-[15px] font-medium">Passkeys and devices</span>
+              <span className="block truncate text-[12.5px] text-ink-faint">
+                Remove a lost phone, sign other devices out
               </span>
             </span>
             <Chevron />
@@ -698,6 +718,8 @@ export default function SettingsPage() {
           />
         </Sheet>
       )}
+
+      {managingDevices && <DevicesSheet onClose={() => setManagingDevices(false)} />}
 
       <h2 className="eyebrow mb-2 mt-5 px-4">About</h2>
       <div className="glass px-4 py-3.5 text-[12.5px] leading-relaxed text-ink-faint">

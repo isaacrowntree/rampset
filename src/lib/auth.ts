@@ -11,7 +11,13 @@
 import { AuthError, createAuthClient } from "durable-auth/client";
 import type { Account } from "@/db/account";
 
-export { AuthError, authErrorMessage, passkeysSupported, type AuthErrorKind } from "durable-auth/client";
+export {
+  AuthError,
+  authErrorMessage,
+  passkeysSupported,
+  type AuthErrorKind,
+  type PasskeySummary,
+} from "durable-auth/client";
 
 const client = createAuthClient<Account["profile"]>({ basePath: "/api/auth" });
 
@@ -57,4 +63,9 @@ export const updateProfile = (patch: { name?: string; profile?: Partial<Account[
   client.updateProfile(patch);
 
 export const signOut = () => client.signOut();
+/** Signs every other device out; this one stays signed in. */
+export const signOutOtherDevices = () => client.signOutOtherDevices();
+export const listPasskeys = () => client.passkeys();
+/** May ask for Face ID first (step-up); the library handles that. */
+export const removePasskey = (id: string) => client.removePasskey(id);
 export const deleteAccount = () => client.deleteAccount();
