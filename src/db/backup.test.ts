@@ -94,6 +94,42 @@ describe("restoreBackup", () => {
   });
 });
 
+describe("restoring a file that isn't what it claims", () => {
+  // Every row lands under the account restoring it, or the file is refused:
+  // a row stamped for another profile would sit on this device and go up
+  // with the next backup.
+  it("refuses a file carrying another profile's rows", async () => {
+    const data = JSON.parse(await exportBackup(USER1));
+    data.workouts.push({ id: "planted", userId: USER2, dayLabel: "x", date: "2026-01-01", startTs: 1 });
+    await expect(restoreBackup(USER1, JSON.stringify(data))).rejects.toThrow(/another account/);
+    expect(await db.workouts.get("planted")).toBeUndefined();
+  });
+
+  it("refuses a damaged file without touching what's here", async () => {
+    await giveUser2History();
+    const data = JSON.parse(await exportBackup(USER2));
+    data.sets = "nope";
+    await expect(restoreBackup(USER2, JSON.stringify(data))).rejects.toThrow(/damaged/);
+    expect(await db.workouts.get("w-user2-only")).toBeDefined();
+  });
+
+  it("drops program structure and sets that hang off nothing in the file", async () => {
+    const data = JSON.parse(await exportBackup(USER1));
+    data.programDays.push({ id: "orphan-day", programId: "not-in-file" });
+    data.sets.push({ id: "orphan-set", userId: USER1, workoutId: "not-in-file" });
+    await restoreBackup(USER1, JSON.stringify(data));
+    expect(await db.programDays.get("orphan-day")).toBeUndefined();
+    expect(await db.sets.get("orphan-set")).toBeUndefined();
+  });
+
+  it("from the cloud, refuses another account's snapshot outright", async () => {
+    const data = JSON.parse(await exportBackup(USER1));
+    await expect(restoreBackup("u_me", JSON.stringify({ ...data, userId: "u_someone" }), { fromCloud: true })).rejects.toThrow(
+      /different account/,
+    );
+  });
+});
+
 describe("moveBackup", () => {
   it("rewrites the owner only as a whole id segment", () => {
     const moved = moveBackup(

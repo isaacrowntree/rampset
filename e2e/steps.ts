@@ -51,7 +51,8 @@ export async function uploaded(page: Page) {
 
 /** The account's journal, as the server holds it. */
 export async function journal(page: Page): Promise<{ opId: string; kind: string }[]> {
-  const res = await page.request.get("/api/sync?since=0");
+  const account = await page.evaluate(() => localStorage.getItem("liftlog.sessionAccount"));
+  const res = await page.request.get("/api/sync?since=0", { headers: { "x-account": account ?? "" } });
   return ((await res.json()) as { ops: { opId: string; kind: string }[] }).ops;
 }
 

@@ -16,6 +16,7 @@ import {
 import type { BackupBucket } from "@/server/backupStore";
 import { parseProfile, type Profile } from "./parseProfile";
 import { deleteUserData, type UserDataEnv } from "./userData";
+import { sameOrigin, wrongAccount } from "./requestChecks";
 
 interface AuthEnv {
   AUTH?: AuthNamespace;
@@ -70,13 +71,11 @@ export function rampsetAuth(): Auth<Profile> | null {
 export async function requireAccount(req: Request): Promise<string | Response> {
   const auth = rampsetAuth();
   if (!auth) return Response.json({ error: "Accounts not configured" }, { status: 503 });
-  // A cookie-authenticated write must come from our own pages.
-  const origin = req.headers.get("origin");
-  if (req.method !== "GET" && origin !== null && origin !== new URL(req.url).origin) {
-    return Response.json({ error: "Cross-origin request refused" }, { status: 403 });
-  }
+  if (!sameOrigin(req)) return Response.json({ error: "Cross-origin request refused" }, { status: 403 });
   const session = await auth.session(req);
   if (!session) return Response.json({ error: "Not signed in" }, { status: 401 });
+  const mismatch = wrongAccount(req, session.userId);
+  if (mismatch) return mismatch;
 
   const api = env().API_LIMITER;
   if (api && !(await rateLimitBinding(api)(`api:${session.userId}`))) {

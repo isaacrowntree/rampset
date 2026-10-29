@@ -53,16 +53,26 @@ export async function exportBackup(userId: string): Promise<string> {
 
 /** Replaces ALL of the user's data with the backup's contents. A backup made
  * under another account — an old device, a previous account — is moved onto
- * this one (see moveBackup). */
+ * this one (see moveBackup).
+ *
+ * `fromCloud`: the cloud only ever holds this account's own snapshot, so one
+ * naming a different account means the session and this device have parted —
+ * refuse it rather than adopt someone else's history. (A profile from before
+ * accounts — an id without the `u_`/`local_` of isAccountId — still moves
+ * over.) */
 export async function restoreBackup(
   userId: string,
   json: string,
+  { fromCloud = false }: { fromCloud?: boolean } = {},
 ): Promise<RestoreSummary> {
   const parsed = JSON.parse(json) as BackupFile;
   if (parsed.format !== "liftlog-backup" || parsed.version !== 1) {
     throw new Error("Not a Rampset backup file");
   }
-  const data = parsed.userId === userId ? parsed : moveBackup(parsed, userId);
+  if (fromCloud && parsed.userId !== userId && /^(u_|local_)/.test(String(parsed.userId))) {
+    throw new Error("That cloud backup belongs to a different account");
+  }
+  const data = checkRows(parsed.userId === userId ? parsed : moveBackup(checkShape(parsed), userId), userId);
 
   await db.transaction(
     "rw",
@@ -98,6 +108,48 @@ export async function restoreBackup(
     workouts: data.workouts.length,
     sets: data.sets.length,
     exercises: data.exercises.length,
+  };
+}
+
+const TABLES = ["exercises", "programs", "programDays", "programExercises", "workouts", "sets"] as const;
+
+/** Every table a list of objects with a string id, or the file is refused. */
+function checkShape(data: BackupFile): BackupFile {
+  if (typeof data.userId !== "string") throw new Error("Not a Rampset backup file");
+  for (const t of TABLES) {
+    const rows = data[t] ?? [];
+    if (!Array.isArray(rows)) throw new Error("This backup file is damaged");
+    for (const row of rows as unknown[]) {
+      if (!row || typeof row !== "object" || typeof (row as { id?: unknown }).id !== "string") {
+        throw new Error("This backup file is damaged");
+      }
+    }
+  }
+  return data;
+}
+
+/** What a restore may write: rows owned by `userId` and nobody else, and only
+ * program structure that hangs off this file's own programs. A file can't
+ * plant rows for another profile on this device — they'd sit there, and the
+ * next backup or import would upload them. */
+function checkRows(data: BackupFile, userId: string): BackupFile {
+  checkShape(data);
+  for (const t of ["exercises", "programs", "workouts", "sets"] as const) {
+    for (const row of data[t] as { userId?: unknown }[]) {
+      if (row.userId !== userId) throw new Error("This backup file has another account's data in it");
+    }
+  }
+  type Ref = { id: string; programId?: string; programDayId?: string; workoutId?: string };
+  const ids = (rows: unknown[]) => new Set((rows as Ref[]).map((r) => r.id));
+  const programs = ids(data.programs);
+  const programDays = (data.programDays as Ref[]).filter((d) => programs.has(d.programId ?? ""));
+  const days = ids(programDays);
+  const workouts = ids(data.workouts);
+  return {
+    ...data,
+    programDays,
+    programExercises: (data.programExercises as Ref[]).filter((pe) => days.has(pe.programDayId ?? "")),
+    sets: (data.sets as Ref[]).filter((s) => workouts.has(s.workoutId ?? "")),
   };
 }
 

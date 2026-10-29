@@ -220,7 +220,7 @@ async function adoptAndRestore(account: Account): Promise<User> {
     import("@/db/autoRestore"),
     import("@/lib/cloudBackup"),
   ]);
-  const restored = await autoRestoreIfEmpty(adopted.id, getLatestCloudBackup);
+  const restored = await autoRestoreIfEmpty(adopted.id, () => getLatestCloudBackup(adopted.id));
   if (restored) console.info(`Rampset: restored ${restored.workouts} workouts from cloud backup`);
   return adopted;
 }

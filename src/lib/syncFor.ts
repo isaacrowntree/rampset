@@ -13,6 +13,7 @@ import { db } from "@/db/db";
 import { applyOp, type SyncOp } from "@/db/sync";
 import { getActiveWorkout } from "@/db/activeWorkout";
 import { mayWriteAs } from "@/lib/identityGate";
+import { accountHeader } from "@/lib/cloudBackup";
 import type { User } from "@/lib/types";
 
 /** The outbox is scoped to the user: it holds the ONLY copy of an unsynced
@@ -56,6 +57,9 @@ export function syncFor(user: User): Sync {
     // this device's account. Writing under the wrong one files data under
     // someone else, permanently, in an append-only log.
     canWrite: () => mayWriteAs(user.id),
+    // And the server checks the same thing against the session itself, which
+    // closes the gap between canWrite and the request landing.
+    headers: () => accountHeader(user.id),
   });
 
   instances.set(user.id, sync);
