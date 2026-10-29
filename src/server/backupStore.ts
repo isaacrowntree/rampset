@@ -94,7 +94,59 @@ export function mergeBackups(
 
 // A decade of workouts is ~2MB. Anyone can sign up, so this is also the most
 // one account can make us store per upload.
-const MAX_BYTES = 10 * 1024 * 1024;
+export const MAX_BYTES = 10 * 1024 * 1024;
+/** latest.json is a union of every upload, so it grows past any one of them;
+ * past this it's no longer a lifting history. */
+const MAX_LATEST_BYTES = 2 * MAX_BYTES;
+/** Hourly rollback points kept per account, newest first. A lifter who backs
+ * up a few times a day keeps months; a script that uploads every hour can't
+ * make us keep more than this. (An R2 lifecycle rule on snapshots/ expires
+ * them by age as well — see the README.) */
+export const MAX_SNAPSHOTS = 200;
+
+/** A backup we refuse for what it is, not for anything that went wrong on our
+ * side: the route answers these with a 400 and their message. */
+export class BackupInputError extends Error {}
+
+/** Another device kept publishing first. Nothing's wrong; try again. */
+export class BackupContendedError extends Error {}
+
+const bytes = (s: string) => new TextEncoder().encode(s).byteLength;
+
+const COLLECTIONS = ["exercises", "programs", "programDays", "programExercises", "workouts", "sets"] as const;
+
+/** Shape-check an upload before anything is stored: a well-formed file for
+ * this account, or a BackupInputError. */
+function parseUpload(json: string, userId: string): BackupData {
+  if (bytes(json) > MAX_BYTES) throw new BackupInputError("Backup too large");
+  let data: BackupData;
+  try {
+    data = JSON.parse(json) as BackupData;
+  } catch {
+    throw new BackupInputError("Not a LiftLog backup");
+  }
+  if (!data || typeof data !== "object" || data.format !== "liftlog-backup" || data.version !== 1) {
+    throw new BackupInputError("Not a LiftLog backup");
+  }
+  // The session decides where this is filed; a file naming another account
+  // means the device and the session have parted.
+  if (data.userId !== userId) throw new BackupInputError("This backup belongs to a different account");
+  for (const name of COLLECTIONS) {
+    const rows = data[name];
+    if (rows === undefined) continue;
+    if (!Array.isArray(rows)) throw new BackupInputError(`Backup's ${name} isn't a list`);
+    for (const row of rows as unknown[]) {
+      if (!row || typeof row !== "object" || typeof (row as Row).id !== "string") {
+        throw new BackupInputError(`Backup has a malformed row in ${name}`);
+      }
+      const owner = (row as Row).userId;
+      if (owner !== undefined && owner !== userId) {
+        throw new BackupInputError(`Backup has another account's row in ${name}`);
+      }
+    }
+  }
+  return data;
+}
 
 function sanitize(userId: string): string {
   return userId.replace(/[^A-Za-z0-9_-]/g, "_");
@@ -110,6 +162,9 @@ export function backupKeys(userId: string, now: Date) {
     // expire them without ever touching the latest.json pointers.
     snapshot: `snapshots/${who}/${stamp}.json`,
     latest: `backups/${who}/latest.json`,
+    /** Written when the account is deleted: an upload already in flight
+     * checks it and cleans up after itself rather than outliving the account. */
+    deleted: `deleted/${who}`,
   };
 }
 
@@ -126,19 +181,13 @@ export async function storeBackup(
   /** Workouts the journal says are deleted — union can't drop rows on its own. */
   tombstonedWorkoutIds: string[] = [],
 ): Promise<StoredSummary> {
-  if (json.length > MAX_BYTES) {
-    throw new Error("Backup too large");
-  }
-  const data = JSON.parse(json) as BackupData;
-  if (data.format !== "liftlog-backup" || data.version !== 1) {
-    throw new Error("Not a LiftLog backup");
-  }
-
+  const data = parseUpload(json, userId);
   const keys = backupKeys(userId, now);
 
   // The dated snapshot is this device's own view, verbatim: the forensic
   // record of what it held. Never merged — that's what makes it a rollback.
   await bucket.put(keys.snapshot, json);
+  await pruneSnapshots(bucket, userId);
 
   // The shared view. Conditional on the etag we read, so a publish that lands
   // between our read and our write is retried against it rather than lost.
@@ -146,20 +195,32 @@ export async function storeBackup(
     const current = await bucket.get(keys.latest);
     const existing = current ? (JSON.parse(await current.text()) as BackupData) : null;
     const merged = mergeBackups(existing, data, tombstonedWorkoutIds);
+    const body = JSON.stringify(merged);
+    if (bytes(body) > MAX_LATEST_BYTES) throw new BackupInputError("Backup too large");
 
     const written = await bucket.put(
       keys.latest,
-      JSON.stringify(merged),
+      body,
       current?.etag ? { onlyIf: { etagMatches: current.etag } } : undefined,
     );
     if (written !== null) {
+      await refuseIfDeleted(bucket, userId);
       return {
         workouts: merged.workouts?.length ?? 0,
         sets: merged.sets?.length ?? 0,
       };
     }
   }
-  throw new Error("Backup contended — another device published first; try again");
+  await refuseIfDeleted(bucket, userId);
+  throw new BackupContendedError("Backup contended — another device published first; try again");
+}
+
+/** The account was deleted while this upload was in flight: what it wrote
+ * must not outlive the account. */
+async function refuseIfDeleted(bucket: BackupBucket, userId: string): Promise<void> {
+  if (!(await bucket.get(backupKeys(userId, new Date(0)).deleted))) return;
+  await deleteBackups(bucket, userId, { markDeleted: false });
+  throw new BackupInputError("This account has been deleted");
 }
 
 export async function fetchLatestBackup(
@@ -171,14 +232,34 @@ export async function fetchLatestBackup(
   return obj ? obj.text() : null;
 }
 
-/** Every object an account has: its latest view and all dated snapshots. */
-export async function deleteBackups(bucket: BackupBucket, userId: string): Promise<void> {
-  const who = sanitize(userId);
-  await bucket.delete(backupKeys(userId, new Date(0)).latest);
+async function snapshotKeys(bucket: BackupBucket, userId: string): Promise<string[]> {
+  const keys: string[] = [];
   let cursor: string | undefined;
   do {
-    const page = await bucket.list({ prefix: `snapshots/${who}/`, cursor });
-    if (page.objects.length) await bucket.delete(page.objects.map((o) => o.key));
+    const page = await bucket.list({ prefix: `snapshots/${sanitize(userId)}/`, cursor });
+    keys.push(...page.objects.map((o) => o.key));
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
+  return keys;
+}
+
+/** Keep the newest MAX_SNAPSHOTS. Keys are hour stamps, so name order is age. */
+async function pruneSnapshots(bucket: BackupBucket, userId: string): Promise<void> {
+  const keys = (await snapshotKeys(bucket, userId)).sort();
+  const old = keys.slice(0, Math.max(0, keys.length - MAX_SNAPSHOTS));
+  if (old.length) await bucket.delete(old);
+}
+
+/** Every object an account has: its latest view and all dated snapshots. Also
+ * leaves a marker, so an upload still in flight removes what it writes. */
+export async function deleteBackups(
+  bucket: BackupBucket,
+  userId: string,
+  { markDeleted = true }: { markDeleted?: boolean } = {},
+): Promise<void> {
+  const keys = backupKeys(userId, new Date(0));
+  if (markDeleted) await bucket.put(keys.deleted, new Date().toISOString());
+  await bucket.delete(keys.latest);
+  const snapshots = await snapshotKeys(bucket, userId);
+  if (snapshots.length) await bucket.delete(snapshots);
 }

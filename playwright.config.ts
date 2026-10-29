@@ -29,7 +29,7 @@ export default defineConfig({
     // --local-upstream: without it wrangler dev presents every request as
     // arriving on the production route's host, and passkeys bind to that
     // domain instead of localhost.
-    command: `rm -rf .wrangler/e2e-state .wrangler/tmp/email && npx wrangler dev --port ${PORT} --persist-to .wrangler/e2e-state --local-upstream localhost:${PORT}`,
+    command: `rm -rf .wrangler/e2e-state .wrangler/tmp/email && npx wrangler dev --port ${PORT} --persist-to .wrangler/e2e-state --local-upstream localhost:${PORT} --var AUTH_CODE_SECRET:e2e-code-secret-e2e-code-secret-e2e`,
     url: `http://localhost:${PORT}/api/auth/config`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

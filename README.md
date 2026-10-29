@@ -100,11 +100,16 @@ Then, once deployed:
 
 1. Set your **Cloudflare account id** in `wrangler.jsonc` (replace the
    placeholder) or export `CLOUDFLARE_ACCOUNT_ID`.
-2. Create the **R2 bucket** the `BACKUPS` binding points at (for cloud backups).
+2. Create the **R2 bucket** the `BACKUPS` binding points at (for cloud backups),
+   and give it a lifecycle rule that expires hourly snapshots after 90 days:
+   `npx wrangler r2 bucket lifecycle add liftlog-backups expire-snapshots snapshots/ --expire-days 90`.
+   (Each account also keeps at most 200 snapshots, whatever their age.)
 3. **Recovery email** (optional): set `EMAIL_FROM` in `wrangler.jsonc` to an
    address on a domain onboarded to Cloudflare Email Sending
-   (`npx wrangler email sending enable <domain>`). Without it, the app simply
-   doesn't offer recovery by email.
+   (`npx wrangler email sending enable <domain>`), and set the
+   `AUTH_CODE_SECRET` secret that codes are hashed under
+   (`openssl rand -base64 32 | npx wrangler secret put AUTH_CODE_SECRET`).
+   Without both, the app simply doesn't offer recovery by email.
 4. **Bot protection** (optional): create a Turnstile widget and set the
    `TURNSTILE_SITE_KEY` var and `TURNSTILE_SECRET_KEY` secret. Sign-up and
    recovery then ask for a Turnstile check.
@@ -112,7 +117,8 @@ Then, once deployed:
 Sign-in and email routes are rate limited per client IP, and sync/backup per
 account (the `ratelimits` bindings). The journal takes a big backlog in batches
 of 100 ops / 1 MB; a backup is capped at 10 MB, with one rollback snapshot kept
-per hour.
+per hour and at most 200 per account. Sync and backup requests name the account
+they're for, and the server refuses any that don't match the session.
 
 **What it costs:** Workers and Durable Objects are free at household scale, and
 there's no KV/cache to configure. The one paid gate is **R2** — the app's

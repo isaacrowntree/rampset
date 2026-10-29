@@ -94,6 +94,36 @@ describe("applying a finished-workout op", () => {
 
     expect(await applyOp(USER1, op!)).toBe(false);
   });
+
+  // An op is only as trustworthy as whoever wrote it to the journal. It may
+  // touch this account's rows and nothing else on the device — not the
+  // household's other profile, whose template ids are easy to guess.
+  it("takes only this account's sets and moves only this account's weights", async () => {
+    const workoutId = await finishRealWorkout();
+    const op = (await buildFinishedWorkoutOp(workoutId))!;
+    await db.delete();
+    await db.open();
+    await seedIfEmpty();
+
+    const theirs = (await db.programExercises.toArray()).find((pe) => pe.programDayId.endsWith("-user-2"))!;
+    op.payload.sets.push(
+      { ...op.payload.sets[0], id: "foreign-user", userId: "user-2" },
+      { ...op.payload.sets[0], id: "foreign-workout", workoutId: "someone-elses" },
+    );
+    op.payload.weights.push({ programExerciseId: theirs.id, workingWeightKg: 500 });
+
+    expect(await applyOp(USER1, op)).toBe(true);
+    expect(await db.sets.where({ workoutId }).count()).toBe(5);
+    expect(await db.sets.get("foreign-user")).toBeUndefined();
+    expect(await db.sets.get("foreign-workout")).toBeUndefined();
+    expect((await db.programExercises.get(theirs.id))!.workingWeightKg).toBe(theirs.workingWeightKg);
+  });
+
+  it("a delete can't remove another profile's workout", async () => {
+    await db.workouts.put({ id: "w-theirs", userId: "user-2", startTs: 1, endTs: 2 } as never);
+    await applyOp(USER1, { opId: "d", kind: "deleteWorkout", payload: { workoutId: "w-theirs" } } as never);
+    expect(await db.workouts.get("w-theirs")).toBeDefined();
+  });
 });
 
 /** An edit as another phone made it: the workout with its sets changed. */

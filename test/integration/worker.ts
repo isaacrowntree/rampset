@@ -62,7 +62,11 @@ const worker = {
         await storeBackup(env.BACKUPS as never, user, backup, new Date());
       }
       const { ops } = await journal.pull(0);
-      const objects = (await env.BACKUPS.list()).objects.filter((o) => o.key.includes(user));
+      // The deleted/ marker stays on purpose: it turns away an upload still
+      // in flight when the account went.
+      const objects = (await env.BACKUPS.list()).objects.filter(
+        (o) => o.key.includes(user) && !o.key.startsWith("deleted/"),
+      );
       return Response.json({ ops: ops.length, backups: objects.length });
     }
     // Rampset's own choices (profile validation, paths, cookie) on the real
@@ -75,6 +79,7 @@ const worker = {
       parseProfile,
       webauthn,
       sendCode: async (to, code) => void sent.push({ to, code }),
+      codeSecret: "integration-code-secret-integration",
       onDeleteAccount: (userId) => deleteUserData(env as never, userId),
     });
     return (await auth.handle(req)) ?? new Response("Not found", { status: 404 });

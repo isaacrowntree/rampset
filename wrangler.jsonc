@@ -67,9 +67,11 @@
       "bucket_name": "liftlog-backups"
     }
   ],
-  // Recovery codes. Optional: without it (or EMAIL_FROM) the app hides email
-  // recovery. EMAIL_FROM's domain must be onboarded to Email Sending:
+  // Recovery codes. Optional: without it, EMAIL_FROM or the AUTH_CODE_SECRET
+  // secret, the app hides email recovery. EMAIL_FROM's domain must be
+  // onboarded to Email Sending:
   //   npx wrangler email sending enable <domain>
+  //   openssl rand -base64 32 | npx wrangler secret put AUTH_CODE_SECRET
   "send_email": [{ "name": "EMAIL" }],
   "vars": {
     "EMAIL_FROM": "noreply@zackdesign.biz"

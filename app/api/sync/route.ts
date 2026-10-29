@@ -5,6 +5,7 @@
 import { requireAccount } from "@/server/auth/deps";
 import { journalFor, type JournalStub } from "@/server/journal";
 import type { JournalOp } from "durable-sync/server";
+import { readLimited } from "@/server/body";
 
 export const dynamic = "force-dynamic";
 
@@ -15,16 +16,26 @@ export const dynamic = "force-dynamic";
  * client drains what comes back as stored and sends the rest next sync. */
 const MAX_OPS = 100;
 const MAX_BYTES = 1024 * 1024;
-/** Past this, it isn't a backlog. */
-const MAX_BODY = 50 * 1024 * 1024;
+/** A finished workout is a few KB. One far past that is never stored — it
+ * couldn't be anyway (a journal row tops out at 2 MB) — and, left out of
+ * `stored`, it stays in that client's outbox instead of failing the push and
+ * wedging every op behind it. */
+const MAX_OP_BYTES = 256 * 1024;
+/** Past this, it isn't a backlog: a thousand-odd workouts queued offline.
+ * Read no further — the whole body is held in memory before it's parsed. */
+const MAX_BODY = 16 * 1024 * 1024;
 
-function batch(ops: JournalOp[]): JournalOp[] {
+const encoder = new TextEncoder();
+
+function batch(ops: unknown[]): JournalOp[] {
   const taken: JournalOp[] = [];
   let bytes = 0;
-  for (const op of ops.slice(0, MAX_OPS)) {
-    const size = JSON.stringify(op).length;
+  for (const op of ops) {
+    if (taken.length >= MAX_OPS) break;
+    const size = encoder.encode(JSON.stringify(op) ?? "").byteLength;
+    if (size > MAX_OP_BYTES) continue;
     if (taken.length > 0 && bytes + size > MAX_BYTES) break;
-    taken.push(op);
+    taken.push(op as JournalOp);
     bytes += size;
   }
   return taken;
@@ -39,10 +50,8 @@ async function journalOrError(req: Request): Promise<JournalStub | Response> {
 export async function POST(req: Request) {
   const journal = await journalOrError(req);
   if (journal instanceof Response) return journal;
-  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY) {
-    return Response.json({ error: "Push too large" }, { status: 413 });
-  }
-  const text = await req.text();
+  const text = await readLimited(req, MAX_BODY);
+  if (text === null) return Response.json({ error: "Push too large" }, { status: 413 });
   const body = (() => {
     try {
       return JSON.parse(text) as { ops?: unknown } | null;
@@ -50,7 +59,7 @@ export async function POST(req: Request) {
       return null;
     }
   })();
-  const ops = Array.isArray(body?.ops) ? (body.ops as JournalOp[]) : [];
+  const ops = Array.isArray(body?.ops) ? (body.ops as unknown[]) : [];
   return Response.json(await journal.push(batch(ops)));
 }
 

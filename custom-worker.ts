@@ -10,6 +10,7 @@
 import handler from "./.open-next/worker.js";
 import { SyncJournal as OpLog } from "durable-sync/server";
 import { AuthDurableObject } from "durable-auth/server";
+import { withSecurityHeaders } from "./src/server/securityHeaders";
 
 /** One instance per account (idFromName(userId)): the single-threaded
  * consistency point that orders that user's sync ops.
@@ -30,4 +31,17 @@ export class SyncJournal extends OpLog {}
  * library upgrades the schema in place on first use. */
 export class Auth extends AuthDurableObject {}
 
-export default handler;
+/** OpenNext's handler, with security headers on every response it makes.
+ * (Static assets are served before the Worker runs; public/_headers covers
+ * those.) */
+const worker = {
+  ...handler,
+  async fetch(req: Request, env: unknown, ctx: unknown) {
+    const res: Response = await handler.fetch(req, env, ctx);
+    // A WebSocket upgrade's response can't be rebuilt.
+    if (res.status === 101) return res;
+    return withSecurityHeaders(res, new URL(req.url).pathname);
+  },
+};
+
+export default worker;

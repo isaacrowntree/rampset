@@ -2,7 +2,7 @@
  * cache-first for static assets. The data layer lives in IndexedDB, so the
  * shell is all we need to make the app open in a gym dead zone. */
 
-const CACHE = "rampset-shell-v8";
+const CACHE = "rampset-shell-v9";
 /** The shell must cache or offline is broken — fail install if it can't. */
 const CORE = ["/", "/manifest.webmanifest", "/icon.svg"];
 /** Every tab's document, so a COLD offline navigation (e.g. tapping History
@@ -13,6 +13,10 @@ const ROUTES = ["/workout", "/history", "/program", "/progress", "/settings"];
 /** Gym dead zones don't fail fetches — they hang them. Anything
  * network-first must give up quickly and fall back to cache. */
 const NETWORK_TIMEOUT_MS = 3000;
+
+function isStatic(url) {
+  return url.pathname.startsWith("/_next/static/") || /\.(svg|png|css|js|woff2?|webmanifest)$/.test(url.pathname);
+}
 
 function timeout(ms) {
   return new Promise((resolve) => setTimeout(() => resolve(undefined), ms));
@@ -79,6 +83,10 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
+  // The API is the account's live state: never answered from, or stored in,
+  // a cache. A stored /api/auth/session would pin who the app thinks is
+  // signed in.
+  if (url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
     // Network-first so deploys land; cached shell when offline OR when the
@@ -93,6 +101,7 @@ self.addEventListener("fetch", (event) => {
       network
         .then(async (res) => {
           if (!res.ok || res.redirected || !res.url.startsWith(location.origin)) return;
+          if (!(res.headers.get("content-type") ?? "").startsWith("text/html")) return;
           // Clone now, before the page starts reading the body.
           const copy = res.clone();
           await cachePage(await caches.open(CACHE), pageKey(request.url), copy);
@@ -134,13 +143,15 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: cache-first.
+  // Static assets: cache-first. Anything else goes to the network untouched,
+  // so nothing outside the build's own files can be served from cache.
+  if (!isStatic(url)) return;
   event.respondWith(
     caches.match(request).then(
       (hit) =>
         hit ??
         fetch(request).then((res) => {
-          if (res.ok && (url.pathname.startsWith("/_next/") || url.pathname.match(/\.(svg|css|js|woff2?)$/))) {
+          if (res.ok) {
             const copy = res.clone();
             caches.open(CACHE).then((cache) => cache.put(request, copy));
           }

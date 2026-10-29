@@ -19,7 +19,7 @@ export async function autoRestoreIfEmpty(
   if (!json) return null;
 
   try {
-    return await restoreBackup(userId, json);
+    return await restoreBackup(userId, json, { fromCloud: true });
   } catch {
     // Corrupt or foreign payload — leave the fresh seed alone.
     return null;

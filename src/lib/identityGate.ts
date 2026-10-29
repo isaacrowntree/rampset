@@ -44,3 +44,16 @@ export function setSessionAccount(userId: string | null | undefined): void {
 export function mayWriteAs(userId: string): boolean {
   return confirmed === userId;
 }
+
+/** Another tab signed in, signed out or wiped the device. This tab's account
+ * is held in memory and would otherwise go on writing as it — under whatever
+ * session the cookie now carries. Reload, and boot as the device now is.
+ * (A storage event never fires in the tab that made the change.) */
+if (typeof window !== "undefined") {
+  addEventListener("storage", (e) => {
+    if (e.key !== CACHE_KEY && e.key !== null) return;
+    if (remembered() === confirmed) return;
+    confirmed = remembered();
+    location.reload();
+  });
+}

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  MAX_SNAPSHOTS,
   backupKeys,
   storeBackup,
   fetchLatestBackup,
@@ -47,7 +48,7 @@ const backup = (over: Record<string, unknown> = {}) =>
     format: "liftlog-backup",
     version: 1,
     exportedAt: "2026-07-03T00:00:00Z",
-    userId: "user-1",
+    userId: "u_a",
     exercises: [],
     programs: [],
     programDays: [],
@@ -159,6 +160,51 @@ describe("storeBackup", () => {
     await expect(storeBackup(bucket, "u_a", "not json", new Date())).rejects.toThrow();
   });
 
+  it("refuses a file naming another account, or carrying another account's rows", async () => {
+    const { bucket, store } = fakeBucket();
+    await expect(storeBackup(bucket, "u_a", backup({ userId: "u_b" }), new Date())).rejects.toThrow(/different account/);
+    await expect(
+      storeBackup(bucket, "u_a", backup({ workouts: [{ id: "w1", userId: "u_b" }] }), new Date()),
+    ).rejects.toThrow(/another account's row/);
+    expect(store.size).toBe(0);
+  });
+
+  it("refuses malformed collections before storing anything", async () => {
+    const { bucket, store } = fakeBucket();
+    await expect(storeBackup(bucket, "u_a", backup({ workouts: "x" }), new Date())).rejects.toThrow(/isn't a list/);
+    await expect(storeBackup(bucket, "u_a", backup({ sets: [{ noId: 1 }] }), new Date())).rejects.toThrow(/malformed/);
+    await expect(storeBackup(bucket, "u_a", "null", new Date())).rejects.toThrow(/not a liftlog backup/i);
+    expect(store.size).toBe(0);
+  });
+
+  it("measures size in bytes, not characters", async () => {
+    const { bucket } = fakeBucket();
+    const VALID = backup();
+    // 4M three-byte characters: 12 MB, though only 4M characters long.
+    const wide = VALID.slice(0, -1) + ',"pad":"' + "€".repeat(4 * 1024 * 1024) + '"}';
+    await expect(storeBackup(bucket, "u_a", wide, new Date())).rejects.toThrow(/too large/i);
+  });
+
+  it("keeps only the newest snapshots", async () => {
+    const { bucket, store } = fakeBucket();
+    const start = Date.parse("2026-07-03T00:00:00Z");
+    for (let h = 0; h < MAX_SNAPSHOTS + 3; h++) {
+      await storeBackup(bucket, "u_a", backup(), new Date(start + h * 3600_000));
+    }
+    const snaps = [...store.keys()].filter((k) => k.startsWith("snapshots/u_a/")).sort();
+    expect(snaps).toHaveLength(MAX_SNAPSHOTS);
+    expect(snaps[0]).toBe(backupKeys("u_a", new Date(start + 3 * 3600_000)).snapshot);
+  });
+
+  // Deletion runs while an upload that already passed the session check is
+  // still writing. What it writes mustn't outlive the account.
+  it("an upload landing after the account was deleted removes what it wrote", async () => {
+    const { bucket, store } = fakeBucket();
+    await deleteBackups(bucket, "u_a");
+    await expect(storeBackup(bucket, "u_a", backup(), new Date())).rejects.toThrow(/deleted/);
+    expect([...store.keys()].filter((k) => k.startsWith("backups/") || k.startsWith("snapshots/"))).toEqual([]);
+  });
+
   it("rejects oversized payloads", async () => {
     const { bucket } = fakeBucket();
     const VALID = backup();
@@ -188,9 +234,10 @@ describe("deleteBackups", () => {
     for (const hour of ["10", "11", "12"]) {
       await storeBackup(bucket, "u_a", backup(), new Date(`2026-07-03T${hour}:00:00Z`));
     }
-    await storeBackup(bucket, "u_other", backup(), new Date());
+    await storeBackup(bucket, "u_other", backup({ userId: "u_other" }), new Date());
     await deleteBackups(bucket, "u_a");
-    expect([...store.keys()].filter((k) => k.includes("u_a"))).toEqual([]);
+    // Only the marker that turns away an upload still in flight.
+    expect([...store.keys()].filter((k) => k.includes("u_a"))).toEqual(["deleted/u_a"]);
     expect(await fetchLatestBackup(bucket, "u_other")).not.toBeNull();
   });
 });

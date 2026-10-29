@@ -187,6 +187,20 @@ export async function enqueueFinishedWorkout(
   await syncFor(user).enqueue(op);
 }
 
+/** An op's exercises, minus any that aren't this account's. Existing ones are
+ * never overwritten. */
+async function putOwnExercises(userId: string, exercises: Exercise[] | undefined): Promise<void> {
+  for (const ex of exercises ?? []) {
+    if (ex.userId !== userId) continue;
+    if (!(await db.exercises.get(ex.id))) await db.exercises.put(ex);
+  }
+}
+
+/** An op's sets, minus any that belong to another account or workout. */
+function ownSets(userId: string, workoutId: string, sets: SetEntry[]): SetEntry[] {
+  return (Array.isArray(sets) ? sets : []).filter((s) => s.userId === userId && s.workoutId === workoutId);
+}
+
 /** Apply one journal op to this device. Existing workouts are never touched. */
 export async function applyOp(userId: string, op: SyncOp): Promise<boolean> {
   if (op.kind === "deleteWorkout") return applyDeleteWorkout(userId, op.payload);
@@ -201,7 +215,7 @@ export async function applyOp(userId: string, op: SyncOp): Promise<boolean> {
   let created = false;
   await db.transaction(
     "rw",
-    [db.workouts, db.sets, db.programExercises, db.exercises, db.tombstones],
+    [db.workouts, db.sets, db.programs, db.programDays, db.programExercises, db.exercises, db.tombstones],
     async () => {
       // Both checks live INSIDE the transaction: two tabs share one
       // IndexedDB, so a check outside it races a concurrent delete and
@@ -209,12 +223,11 @@ export async function applyOp(userId: string, op: SyncOp): Promise<boolean> {
       if (await db.tombstones.get(workout.id)) return;
       if (await db.workouts.get(workout.id)) return;
 
-      for (const ex of exercises ?? []) {
-        if (!(await db.exercises.get(ex.id))) await db.exercises.put(ex);
-      }
+      await putOwnExercises(userId, exercises);
       await db.workouts.put(workout);
-      if (sets.length) await db.sets.bulkPut(sets);
-      for (const w of weights) await applyWeight(w);
+      const own = ownSets(userId, workout.id, sets);
+      if (own.length) await db.sets.bulkPut(own);
+      for (const w of weights) await applyWeight(userId, w);
       created = true;
     },
   );
@@ -235,19 +248,19 @@ async function applyEditedWorkout(
   let applied = false;
   await db.transaction(
     "rw",
-    [db.workouts, db.sets, db.programExercises, db.exercises, db.tombstones],
+    [db.workouts, db.sets, db.programs, db.programDays, db.programExercises, db.exercises, db.tombstones],
     async () => {
       if (await db.tombstones.get(workout.id)) return; // deleted stays deleted
       const current = await db.workouts.get(workout.id);
+      if (current && current.userId !== userId) return; // another profile's row
       if ((current?.editedAt ?? 0) >= editedAt) return; // we have this edit, or a later one
 
-      for (const ex of exercises ?? []) {
-        if (!(await db.exercises.get(ex.id))) await db.exercises.put(ex);
-      }
+      await putOwnExercises(userId, exercises);
       await db.workouts.put({ ...workout, editedAt });
       await db.sets.where({ workoutId: workout.id }).delete();
-      if (sets.length) await db.sets.bulkPut(sets);
-      if (moveWeights) for (const w of weights) await applyWeight(w);
+      const own = ownSets(userId, workout.id, sets);
+      if (own.length) await db.sets.bulkPut(own);
+      if (moveWeights) for (const w of weights) await applyWeight(userId, w);
       applied = true;
     },
   );
@@ -275,8 +288,13 @@ async function applyDeleteWorkout(
 
   await db.transaction(
     "rw",
-    [db.workouts, db.sets, db.programExercises, db.tombstones, db.outbox],
+    [db.workouts, db.sets, db.programs, db.programDays, db.programExercises, db.tombstones, db.outbox],
     async () => {
+      // A device can hold another profile's history (from before accounts).
+      // This account's journal says nothing about that.
+      const held = await db.workouts.get(workoutId);
+      if (held && held.userId !== userId) return;
+
       // Have we already applied THIS delete? The tombstone is written in this
       // same transaction, so its absence is exactly "first sight" — there is
       // no window where one is true and the other isn't.
@@ -296,7 +314,7 @@ async function applyDeleteWorkout(
       // On a replay the weight has moved on — a later op corrected it, or the
       // lifter edited it by hand — and re-asserting a rollback from the past
       // would silently undo that. Replay must land where the first pass landed.
-      if (firstSight) for (const w of weights ?? []) await applyWeight(w);
+      if (firstSight) for (const w of weights ?? []) await applyWeight(userId, w);
     },
   );
   return true;
@@ -304,10 +322,16 @@ async function applyDeleteWorkout(
 
 /** Mirror one slot's progression state. Only fields the op actually carried
  * are written, so an op from before `sets`/`deloadCount` existed is still a
- * valid weight-only update rather than a reset to undefined. */
-async function applyWeight(w: WeightUpdate): Promise<void> {
+ * valid weight-only update rather than a reset to undefined. Only a slot in
+ * one of this account's own programs moves: template ids are predictable,
+ * and another profile's program can sit on the same device. */
+async function applyWeight(userId: string, w: WeightUpdate): Promise<void> {
   const pe = await db.programExercises.get(w.programExerciseId);
   if (!pe) return;
+  const day = await db.programDays.get(pe.programDayId);
+  const program = day && (await db.programs.get(day.programId));
+  if (program?.userId !== userId) return;
+  if (typeof w.workingWeightKg !== "number" || !Number.isFinite(w.workingWeightKg)) return;
   const patch: { workingWeightKg: number; sets?: number; deloadCount?: number } = {
     workingWeightKg: w.workingWeightKg,
   };
