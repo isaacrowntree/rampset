@@ -21,6 +21,11 @@ const eslintConfig = [
   ...nextCoreWebVitals,
   ...nextTypescript,
   {
+    // Opt-in, outside the preset: React's "You Might Not Need an Effect" —
+    // state derived from props/state belongs in render, not an Effect.
+    rules: { "react-hooks/no-deriving-state-in-effects": "error" },
+  },
+  {
     rules: {
       // react-hooks v6 (shipped with Next 16) adds React-Compiler-oriented
       // rules that flag deliberate, tested patterns here: the "latest ref"
