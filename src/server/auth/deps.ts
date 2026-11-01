@@ -4,6 +4,7 @@
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
+  authStoreFrom,
   cloudflareEmail,
   createAuth,
   rateLimitBinding,
@@ -16,6 +17,7 @@ import {
 import type { BackupBucket } from "@/server/backupStore";
 import { parseProfile, type Profile } from "./parseProfile";
 import { deleteUserData, type UserDataEnv } from "./userData";
+import { securityNotice } from "./securityNotice";
 import { sameOrigin, wrongAccount } from "./requestChecks";
 
 interface AuthEnv {
@@ -35,6 +37,10 @@ interface AuthEnv {
   BACKUPS?: BackupBucket;
 }
 
+/** However much a session is used, it ends this long after sign-in: a copied
+ * cookie can't outlive it. Signing back in is one passkey tap. */
+const SESSION_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+
 function env(): AuthEnv {
   return getCloudflareContext().env as AuthEnv;
 }
@@ -44,6 +50,8 @@ function env(): AuthEnv {
 export function rampsetAuth(): Auth<Profile> | null {
   const e = env();
   if (!e.AUTH) return null;
+  const store = e.AUTH;
+  const email = e.EMAIL && e.EMAIL_FROM ? { binding: e.EMAIL, from: e.EMAIL_FROM } : null;
   return createAuth<Profile>({
     store: e.AUTH,
     rpName: "Rampset",
@@ -52,9 +60,7 @@ export function rampsetAuth(): Auth<Profile> | null {
     maxNameLength: 40,
     parseProfile,
     sendCode:
-      e.EMAIL && e.EMAIL_FROM && e.AUTH_CODE_SECRET
-        ? cloudflareEmail(e.EMAIL, { from: e.EMAIL_FROM, appName: "Rampset" })
-        : undefined,
+      email && e.AUTH_CODE_SECRET ? cloudflareEmail(email.binding, { from: email.from, appName: "Rampset" }) : undefined,
     codeSecret: e.AUTH_CODE_SECRET,
     turnstile:
       e.TURNSTILE_SITE_KEY && e.TURNSTILE_SECRET_KEY
@@ -63,6 +69,14 @@ export function rampsetAuth(): Auth<Profile> | null {
     rateLimit: e.AUTH_LIMITER ? rateLimitBinding(e.AUTH_LIMITER) : undefined,
     waitUntil: (work) => getCloudflareContext().ctx.waitUntil(work),
     onDeleteAccount: (userId) => deleteUserData(e as UserDataEnv, userId),
+    sessionMaxAgeMs: SESSION_MAX_AGE_MS,
+    onSecurityEvent: email
+      ? securityNotice({
+          email: email.binding,
+          from: email.from,
+          recoveryEmail: async (userId) => (await authStoreFrom(store).account(userId))?.email ?? null,
+        })
+      : undefined,
   });
 }
 

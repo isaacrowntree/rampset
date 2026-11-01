@@ -12,8 +12,8 @@ export interface JournalStub {
   push(ops: JournalOp[]): Promise<PushResult>;
   pull(since: number, withSnapshot?: boolean): Promise<PullResult>;
   opsByKind(kind: string): Promise<{ ops: StoredOp[] }>;
-  /** Never routed to a client — only account deletion calls it. */
-  reset(): Promise<{ cleared: number; epoch: string }>;
+  // eraseJournal is deliberately absent: routes get this stub, and only
+  // account deletion (userData.ts) may erase a journal.
 }
 
 interface JournalNamespace {
