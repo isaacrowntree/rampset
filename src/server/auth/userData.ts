@@ -7,7 +7,7 @@ import { deleteBackups, type BackupBucket } from "@/server/backupStore";
 
 interface JournalNamespace {
   idFromName(name: string): unknown;
-  get(id: unknown): { reset(): Promise<unknown> };
+  get(id: unknown): { eraseJournal(options: { confirm: "erase" }): Promise<unknown> };
 }
 
 export interface UserDataEnv {
@@ -17,6 +17,6 @@ export interface UserDataEnv {
 
 export async function deleteUserData(env: UserDataEnv, userId: string): Promise<void> {
   const ns = env.SYNC_JOURNAL;
-  if (ns) await ns.get(ns.idFromName(userId)).reset();
+  if (ns) await ns.get(ns.idFromName(userId)).eraseJournal({ confirm: "erase" });
   if (env.BACKUPS) await deleteBackups(env.BACKUPS, userId);
 }
