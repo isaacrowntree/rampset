@@ -99,6 +99,8 @@ test("correcting history: a past workout's reps and note can be fixed from Histo
   await last.click();
   await last.click();
   await expect(last).toHaveAccessibleName(/^3 of 5 reps logged/);
+  // A workout finished over two days is finished here: logging rests too.
+  await expect(p.page.getByRole("status", { name: /^Resting/ })).toBeVisible();
   await p.page.getByRole("button", { name: "Workout options" }).click();
   await p.page.getByRole("menuitem", { name: "Workout note" }).click();
   await p.page.getByPlaceholder(/How did it go/).fill("Knee felt off on the last set");

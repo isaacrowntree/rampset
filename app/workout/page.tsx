@@ -61,6 +61,13 @@ function WorkoutScreen() {
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
   const timer = useRestTimer();
+  /** Editing a past workout runs its own rest timer — a workout split across
+   * two days is finished by editing it — unless a live workout is going: the
+   * timer is global, and that workout's rest isn't this one's to clobber. */
+  const [editRests, setEditRests] = useState(false);
+  /** When this edit was opened: the header clock counts from here, not from
+   * the past workout's start days ago. */
+  const [editOpenedTs] = useState(() => Date.now());
   useWakeLock(session !== null);
 
   // Pull down from the top to minimize, like Now Playing. Editing a past
@@ -93,7 +100,11 @@ function WorkoutScreen() {
         }
         const s = await buildEditSession(past);
         editBaseline.current = await workoutSignature(past.id);
-        if (!cancelled) setSession(s);
+        const activeId = localStorage.getItem(activeWorkoutKey(user.id));
+        const live = activeId && activeId !== past.id ? await db.workouts.get(activeId) : undefined;
+        if (cancelled) return;
+        setEditRests(!(live && live.endTs === undefined));
+        setSession(s);
         return;
       }
 
@@ -182,8 +193,9 @@ function WorkoutScreen() {
   async function saveEdit() {
     if (finishing.current || !session || !user) return;
     finishing.current = true;
-    // No timer.stop(): edit mode never starts one, and the rest running is
-    // the in-progress workout's, not this one's.
+    // A rest this edit started ends with it — left persisted, it would turn
+    // up on the next live workout. A live workout's rest is left alone.
+    if (editRests) timer.stop();
     try {
       if ((await workoutSignature(session.workout.id)) !== editBaseline.current) {
         const recomputed = await saveFinishedWorkout(session.workout.id);
@@ -205,10 +217,11 @@ function WorkoutScreen() {
     else router.replace("/history");
   };
 
-  /** Logging a set starts the rest — except when correcting a past workout:
-   * the timer is global, and would clobber a live workout's rest. */
+  /** Logging a set starts the rest — editing a past workout too, unless a
+   * live workout owns the (global) timer. */
+  const resting = !editId || editRests;
   const rest = (style: "up" | "down") => (seconds: number) => {
-    if (!editId) timer.start(seconds, style);
+    if (resting) timer.start(seconds, style);
   };
 
   /** Minimize keeps everything — including an active rest countdown. */
@@ -273,8 +286,9 @@ function WorkoutScreen() {
         <div className="min-w-0 flex-1 text-center">
           <div className="truncate text-[17px] font-semibold leading-tight">{session.day.name}</div>
           {editId ? (
-            <div className="text-[13px] leading-tight text-ink-dim">
-              Editing · {formatDate(session.workout.date)}
+            <div className="flex items-center justify-center gap-1 text-[13px] leading-tight text-ink-dim">
+              <span>Editing · {formatDate(session.workout.date)} ·</span>
+              <ElapsedClock startTs={editOpenedTs} />
             </div>
           ) : (
             <ElapsedClock startTs={session.workout.startTs} />
@@ -448,8 +462,8 @@ function WorkoutScreen() {
         </Sheet>
       )}
 
-      {/* The running rest belongs to the live workout, not a past one. */}
-      {!editId && <RestTimerBar {...timer} onDismiss={timer.stop} />}
+      {/* A live workout's running rest isn't shown over a past one. */}
+      {resting && <RestTimerBar {...timer} onDismiss={timer.stop} />}
     </div>
   );
 }
