@@ -101,6 +101,13 @@ export async function finish(page: Page) {
   await expect(page).toHaveURL(/\/history/);
 }
 
+/** Save an edited past workout: confirm, like Finish, and land on History. */
+export async function saveEdit(page: Page) {
+  await page.getByRole("button", { name: "Save workout" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Save workout" }).click();
+  await expect(page).toHaveURL(/\/history/);
+}
+
 /** The Program tab's summary for an exercise on a day, e.g. "5×5 · 22.5kg". */
 export async function programRow(page: Page, day: string, name: string) {
   await page.getByRole("navigation").getByRole("link", { name: "Program" }).click();

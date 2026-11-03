@@ -11,6 +11,7 @@ import {
   logReps,
   openSettings,
   programRow,
+  saveEdit,
   signInWithPasskey,
   startNext,
 } from "./steps";
@@ -105,13 +106,37 @@ test("correcting history: a past workout's reps and note can be fixed from Histo
   await p.page.getByRole("menuitem", { name: "Workout note" }).click();
   await p.page.getByPlaceholder(/How did it go/).fill("Knee felt off on the last set");
   await p.page.getByRole("button", { name: "Save note" }).click();
-  await p.page.getByRole("button", { name: "Save workout" }).click();
+  await saveEdit(p.page);
 
   await expect(p.page.getByText("Knee felt off on the last set")).toBeVisible();
   await p.page.getByRole("button", { name: /^Edit Workout A from/ }).click();
   await expect(
     exercise(p.page, "Squat").getByRole("button", { name: /reps logged/ }).nth(4),
   ).toHaveAccessibleName(/^3 of 5 reps logged/);
+});
+
+test("a workout split over two days is finished by editing it, missed reps and all", async ({ phone }) => {
+  const p = await phone();
+  await createAccount(p.page, "Isaac");
+  // Day one: three squat sets, then out of time.
+  await startNext(p.page);
+  await logReps(p.page, "Squat", [5, 5, 5]);
+  await finish(p.page);
+
+  // Day two: the last two sets, the final one missed — a fail rest, as live.
+  await p.page.getByRole("button", { name: /^Edit Workout A from/ }).click();
+  const plates = exercise(p.page, "Squat").getByRole("button", { name: /reps (target|logged)/ });
+  await plates.nth(3).click();
+  await expect(p.page.getByRole("status", { name: /^Resting/ })).toContainText("bell at 1:30");
+  await plates.nth(4).click();
+  await plates.nth(4).click();
+  await expect(plates.nth(4)).toHaveAccessibleName(/^4 of 5 reps logged/);
+  await expect(p.page.getByRole("status", { name: /^Resting/ })).toContainText("bell at 5:00");
+  await saveEdit(p.page);
+  await expect(p.page.getByRole("status", { name: /^Resting/ })).toHaveCount(0);
+
+  // The miss holds the squat, exactly as finishing it live would have.
+  await expect(await programRow(p.page, "Workout B", "Squat")).toContainText("20kg");
 });
 
 test("Madcow: Monday's volume day hands over to Wednesday's light day", async ({ phone }) => {

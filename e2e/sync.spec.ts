@@ -4,7 +4,7 @@
  * way across; signing out and back in tests the snapshot. */
 import { test, expect, type Phone } from "./fixtures";
 import { loseSyncReplies, useNetwork, withoutCloudRestore, type Network } from "./network";
-import { createAccount, doWorkout, exercise, journal, openSettings, signInWithPasskey, signOut, uploaded } from "./steps";
+import { createAccount, doWorkout, exercise, journal, openSettings, signInWithPasskey, signOut, uploaded, saveEdit } from "./steps";
 
 /** This phone's own count, from Settings → Your data. */
 async function workoutsOn(phone: Phone) {
@@ -116,12 +116,10 @@ test("two phones correcting the same workout offline agree on the later edit", a
   const restoreFirst = await useNetwork(first, "offline");
   const restoreSecond = await useNetwork(second, "offline");
   await correctLastSquat(first, 4);
-  await first.page.getByRole("button", { name: "Save workout" }).click();
-  await expect(first.page).toHaveURL(/\/history/);
+  await saveEdit(first.page);
   await first.page.waitForTimeout(50); // the second edit is unambiguously later
   await correctLastSquat(second, 2);
-  await second.page.getByRole("button", { name: "Save workout" }).click();
-  await expect(second.page).toHaveURL(/\/history/);
+  await saveEdit(second.page);
 
   // The later edit reaches the journal first; the earlier one after.
   await restoreSecond();

@@ -25,6 +25,7 @@ import { usePullToDismiss } from "@/lib/usePullToDismiss";
 import { activeWorkoutKey } from "@/db/activeWorkout";
 import { completeWorkout } from "@/lib/finishFlow";
 import { sessionTonnageKg, workSetCount } from "@/lib/workoutStats";
+import { markJustFinished } from "@/lib/justFinished";
 import { scheduleBackup } from "@/lib/backupAfterEdit";
 import { enqueueEditedWorkout } from "@/db/sync";
 
@@ -154,6 +155,11 @@ function WorkoutScreen() {
   }
 
   const askFinish = async () => {
+    // Editing: an unchanged workout has nothing to confirm — just go back.
+    if (editId && (await workoutSignature(session.workout.id)) === editBaseline.current) {
+      void saveEdit();
+      return;
+    }
     const sets = await db.sets.where({ workoutId: session.workout.id }).toArray();
     setConfirmingFinish({
       workSets: workSetCount(sets),
@@ -185,12 +191,10 @@ function WorkoutScreen() {
     }
   };
 
-  /** Edit mode's Finish: the sets are already saved as they're logged, so
-   * this just settles progression and backs up. */
   /** Every way out of editing — Save, Back, pulling down — keeps what was
    * logged, so every way out saves it: to progression, and to every phone.
    * Leaving without a change sends nothing. */
-  async function saveEdit() {
+  async function saveEdit(celebrate?: { tonnageKg: number }) {
     if (finishing.current || !session || !user) return;
     finishing.current = true;
     // A rest this edit started ends with it — left persisted, it would turn
@@ -202,9 +206,13 @@ function WorkoutScreen() {
         // The correction goes to every phone, not just the next new one.
         await enqueueEditedWorkout(user.id, session.workout.id, recomputed).catch(() => {});
         scheduleBackup(user.id);
+        // Saved from the button, through the same confirm as Finish: the same
+        // congrats in History too.
+        if (celebrate) markJustFinished({ workoutId: session.workout.id, ...celebrate });
       }
       navigatingAway.current = true;
-      leaveEdit();
+      // From the confirm sheet, its own history entry sits on top of ours.
+      leaveEdit(celebrate !== undefined || confirmingFinish !== null ? 2 : 1);
     } finally {
       finishing.current = false;
     }
@@ -212,8 +220,8 @@ function WorkoutScreen() {
 
   /** Back out of editing a past workout to History — popping the entry
    * History pushed, or (deep-linked, nothing behind) replacing it. */
-  const leaveEdit = () => {
-    if (window.history.length > 1) router.back();
+  const leaveEdit = (entries: 1 | 2) => {
+    if (window.history.length > entries) window.history.go(-entries);
     else router.replace("/history");
   };
 
@@ -391,7 +399,7 @@ function WorkoutScreen() {
       {/* Primary action lives at the end of the set list — finish once the
           last set is logged, rather than reaching for the header. */}
       <button
-        onClick={editId ? () => void saveEdit() : askFinish}
+        onClick={() => void askFinish()}
         className="mt-8 block w-full rounded-full bg-plate-10 py-3.5 text-center text-[17px] font-semibold text-black"
       >
         {editId ? "Save workout" : "Finish workout"}
@@ -399,23 +407,31 @@ function WorkoutScreen() {
 
       {confirmingFinish && (
         <ConfirmSheet
-          title="Finish workout?"
+          title={editId ? "Save workout?" : "Finish workout?"}
           body={
             confirmingFinish.workSets === 0
-              ? "You haven’t logged any sets, so this workout won’t be saved."
+              ? editId
+                ? "No sets are logged in this workout."
+                : "You haven’t logged any sets, so this workout won’t be saved."
               : `${confirmingFinish.workSets} set${
                   confirmingFinish.workSets === 1 ? "" : "s"
                 } logged${
                   confirmingFinish.tonnageKg > 0
                     ? ` · ${Math.round(confirmingFinish.tonnageKg).toLocaleString()}kg moved`
                     : ""
-                }. ${session.day.name} will be saved to History.`
+                }. ${session.day.name} will be ${editId ? "updated in" : "saved to"} History.`
           }
-          confirmLabel={confirmingFinish.workSets === 0 ? "Discard workout" : "Finish workout"}
-          tone={confirmingFinish.workSets === 0 ? "danger" : "positive"}
+          confirmLabel={
+            editId ? "Save workout" : confirmingFinish.workSets === 0 ? "Discard workout" : "Finish workout"
+          }
+          tone={!editId && confirmingFinish.workSets === 0 ? "danger" : "positive"}
           keepHistoryOnUnmount={navigatingAway}
           onConfirm={() =>
-            void finish(confirmingFinish.tonnageKg, confirmingFinish.workSets)
+            editId
+              ? void saveEdit(
+                  confirmingFinish.workSets > 0 ? { tonnageKg: confirmingFinish.tonnageKg } : undefined,
+                ).finally(() => setConfirmingFinish(null))
+              : void finish(confirmingFinish.tonnageKg, confirmingFinish.workSets)
           }
           onCancel={() => setConfirmingFinish(null)}
         />
