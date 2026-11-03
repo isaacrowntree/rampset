@@ -193,8 +193,9 @@ function WorkoutScreen() {
 
   /** Every way out of editing — Save, Back, pulling down — keeps what was
    * logged, so every way out saves it: to progression, and to every phone.
-   * Leaving without a change sends nothing. */
-  async function saveEdit(celebrate?: { tonnageKg: number }) {
+   * Leaving without a change sends nothing. `confirmed` is the Save confirm
+   * sheet's summary, when it came through there. */
+  async function saveEdit(confirmed?: { workSets: number; tonnageKg: number }) {
     if (finishing.current || !session || !user) return;
     finishing.current = true;
     // A rest this edit started ends with it — left persisted, it would turn
@@ -208,11 +209,13 @@ function WorkoutScreen() {
         scheduleBackup(user.id);
         // Saved from the button, through the same confirm as Finish: the same
         // congrats in History too.
-        if (celebrate) markJustFinished({ workoutId: session.workout.id, ...celebrate });
+        if (confirmed && confirmed.workSets > 0) {
+          markJustFinished({ workoutId: session.workout.id, tonnageKg: confirmed.tonnageKg });
+        }
       }
       navigatingAway.current = true;
       // From the confirm sheet, its own history entry sits on top of ours.
-      leaveEdit(celebrate !== undefined || confirmingFinish !== null ? 2 : 1);
+      leaveEdit(confirmed ? 2 : 1);
     } finally {
       finishing.current = false;
     }
@@ -428,9 +431,7 @@ function WorkoutScreen() {
           keepHistoryOnUnmount={navigatingAway}
           onConfirm={() =>
             editId
-              ? void saveEdit(
-                  confirmingFinish.workSets > 0 ? { tonnageKg: confirmingFinish.tonnageKg } : undefined,
-                ).finally(() => setConfirmingFinish(null))
+              ? void saveEdit(confirmingFinish).finally(() => setConfirmingFinish(null))
               : void finish(confirmingFinish.tonnageKg, confirmingFinish.workSets)
           }
           onCancel={() => setConfirmingFinish(null)}
