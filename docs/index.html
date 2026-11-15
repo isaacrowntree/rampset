@@ -436,25 +436,25 @@
     <p class="intro">Rampset deploys to your own Cloudflare account. Anyone can create an account on your instance. Accounts, passkeys and sync live in Durable Objects, so there's no database to set up.</p>
     <div class="host">
       <ol class="steps big">
-        <li><b>Clone and install.</b> <span class="dim">Fork <a href="https://github.com/isaacrowntree/rampset">the repo</a>, then <code>npm install</code>. <code>npm run preview</code> runs the real worker locally, with Durable Objects, R2 and email.</span></li>
+        <li><b>Clone and install.</b> <span class="dim">Fork <a href="https://github.com/isaacrowntree/rampset">the repo</a>, then <code>bun install</code>. <code>bun run preview</code> runs the real worker locally, with Durable Objects, R2 and email.</span></li>
         <li><b>Point it at your domain.</b> <span class="dim">In <code>wrangler.jsonc</code>, change the route from <code>liftlog.zackdesign.biz</code> to your own domain. Passkeys are tied to that one origin.</span></li>
-        <li><b>Deploy.</b> <span class="dim"><code>npm run deploy</code> builds with OpenNext and ships the worker with its two Durable Objects, <code>AUTH</code> and <code>SYNC_JOURNAL</code>.</span></li>
+        <li><b>Deploy.</b> <span class="dim"><code>bun run deploy</code> builds with OpenNext and ships the worker with its two Durable Objects, <code>AUTH</code> and <code>SYNC_JOURNAL</code>.</span></li>
         <li><b>Cloud backups (optional).</b> <span class="dim">Create the R2 bucket that the <code>BACKUPS</code> binding points at. Leave the binding out and sync still works; Download backup still gives people a full file.</span></li>
-        <li><b>Recovery email (optional).</b> <span class="dim">Onboard a domain with <code>npx wrangler email sending enable &lt;domain&gt;</code> set <code>EMAIL_FROM</code> to an address on it, and set the <code>AUTH_CODE_SECRET</code> secret (<code>openssl rand -base64 32 | npx wrangler secret put AUTH_CODE_SECRET</code>). Without both, the app doesn't offer email recovery.</span></li>
+        <li><b>Recovery email (optional).</b> <span class="dim">Onboard a domain with <code>bunx wrangler email sending enable &lt;domain&gt;</code> set <code>EMAIL_FROM</code> to an address on it, and set the <code>AUTH_CODE_SECRET</code> secret (<code>openssl rand -base64 32 | bunx wrangler secret put AUTH_CODE_SECRET</code>). Without both, the app doesn't offer email recovery.</span></li>
         <li><b>Bot protection (optional).</b> <span class="dim">Create a Turnstile widget and set the <code>TURNSTILE_SITE_KEY</code> var and <code>TURNSTILE_SECRET_KEY</code> secret. Sign-in, email and sync routes are already rate limited.</span></li>
       </ol>
       <div class="term" role="img" aria-label="Terminal commands: clone the repository, install, preview locally on port 8787, create the R2 bucket, and deploy">
         <div class="tbar" aria-hidden="true"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
 <pre aria-hidden="true"><span class="c"># run the real worker locally</span>
 git clone https://github.com/isaacrowntree/rampset
-cd rampset && npm install
-npm run preview        <span class="c"># localhost:8787</span>
+cd rampset && bun install
+bun run preview        <span class="c"># localhost:8787</span>
 
 <span class="c"># optional: cloud backups</span>
-npx wrangler r2 bucket create liftlog-backups
+bunx wrangler r2 bucket create liftlog-backups
 
 <span class="c"># ship it</span>
-npm run deploy</pre>
+bun run deploy</pre>
       </div>
     </div>
     <p class="cost">What it costs: Workers and Durable Objects fit in Cloudflare's free tier for a household. Backups fit easily in R2's free 10 GB, but Cloudflare asks for a payment method before it turns R2 on. You won't be charged under the free limits. The <a href="https://github.com/isaacrowntree/rampset#readme">README</a> has the details.</p>

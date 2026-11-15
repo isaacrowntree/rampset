@@ -5,7 +5,7 @@ import { parseStrongCsv } from "./strong";
 
 // Optional acceptance tests against real exports. Point these env vars at
 // your own export files to run them; they skip when unset:
-//   LIFTLOG_SL_EXPORT=~/stronglifts.csv LIFTLOG_STRONG_EXPORT=~/strong.csv npm test
+//   LIFTLOG_SL_EXPORT=~/stronglifts.csv LIFTLOG_STRONG_EXPORT=~/strong.csv bun run test
 const SL_PATH = process.env.LIFTLOG_SL_EXPORT ?? "";
 const STRONG_PATH = process.env.LIFTLOG_STRONG_EXPORT ?? "";
 

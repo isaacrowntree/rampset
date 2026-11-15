@@ -48,7 +48,7 @@ session setup with cancellation). Two violate the rule and get fixed:
 
 ## 3 — Ops hygiene
 
-- [ ] Workers Builds: set build command `npx opennextjs-cloudflare build`
+- [ ] Workers Builds: set build command `bunx opennextjs-cloudflare build`
       (dashboard) — CI deploys are already harmless (runtime config), but
       builds should produce the OpenNext output deliberately.
 - [x] Retire `NEXT_PUBLIC_LIFTLOG_USERS` from the build path entirely once

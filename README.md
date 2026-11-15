@@ -57,23 +57,23 @@ subscription, no password to lose, no roadmap that abandons you.
 ```bash
 git clone https://github.com/isaacrowntree/rampset
 cd rampset
-npm install
-npm run dev                    # → http://localhost:3000, device-only (no accounts)
-npm run preview                # → http://localhost:8787, the real worker: accounts, sync
+bun install
+bun run dev                    # → http://localhost:3000, device-only (no accounts)
+bun run preview                # → http://localhost:8787, the real worker: accounts, sync
 ```
 
-`npm run dev` is plain Next.js, which can't run Durable Objects — so the app
+`bun run dev` is plain Next.js, which can't run Durable Objects — so the app
 offers **Start on this device**, a local-only account with no sync. Use
-`npm run preview` to work on sign-in and sync: it builds the worker and serves
+`bun run preview` to work on sign-in and sync: it builds the worker and serves
 it under `wrangler dev`, with the Durable Objects, R2, rate limits and email
 running locally (sent emails are written under `.wrangler/tmp/email/`).
 
 ## Tests
 
 ```bash
-npm test                       # unit + component (Vitest, jsdom)
-npm run test:integration       # the Auth Durable Object on real workerd SQLite
-npm run test:e2e               # the whole app in Chromium against the built worker
+bun run test                   # unit + component (Vitest, jsdom)
+bun run test:integration       # the Auth Durable Object on real workerd SQLite
+bun run test:e2e               # the whole app in Chromium against the built worker
 ```
 
 The end-to-end suite (`e2e/`) is the one to trust. It drives real journeys —
@@ -93,7 +93,7 @@ every device. Accounts, passkeys and sessions live in a Durable Object — there
 is nothing to configure in the dashboard.
 
 ```bash
-npm run deploy                 # opennextjs-cloudflare build && deploy
+bun run deploy                 # opennextjs-cloudflare build && deploy
 ```
 
 Then, once deployed:
@@ -102,13 +102,13 @@ Then, once deployed:
    placeholder) or export `CLOUDFLARE_ACCOUNT_ID`.
 2. Create the **R2 bucket** the `BACKUPS` binding points at (for cloud backups),
    and give it a lifecycle rule that expires hourly snapshots after 90 days:
-   `npx wrangler r2 bucket lifecycle add liftlog-backups expire-snapshots snapshots/ --expire-days 90`.
+   `bunx wrangler r2 bucket lifecycle add liftlog-backups expire-snapshots snapshots/ --expire-days 90`.
    (Each account also keeps at most 200 snapshots, whatever their age.)
 3. **Recovery email** (optional): set `EMAIL_FROM` in `wrangler.jsonc` to an
    address on a domain onboarded to Cloudflare Email Sending
-   (`npx wrangler email sending enable <domain>`), and set the
+   (`bunx wrangler email sending enable <domain>`), and set the
    `AUTH_CODE_SECRET` secret that codes are hashed under
-   (`openssl rand -base64 32 | npx wrangler secret put AUTH_CODE_SECRET`).
+   (`openssl rand -base64 32 | bunx wrangler secret put AUTH_CODE_SECRET`).
    Without both, the app simply doesn't offer recovery by email.
 4. **Bot protection** (optional): create a Turnstile widget and set the
    `TURNSTILE_SITE_KEY` var and `TURNSTILE_SECRET_KEY` secret. Sign-up and

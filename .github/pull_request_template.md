@@ -4,7 +4,7 @@
 
 ## Checklist
 
-- [ ] `npm test` passes
-- [ ] `npm run typecheck` is clean
-- [ ] `npm run lint` is clean
+- [ ] `bun run test` passes
+- [ ] `bun run typecheck` is clean
+- [ ] `bun run lint` is clean
 - [ ] If it changes training behaviour, a test proves the new behaviour

@@ -7,9 +7,9 @@ tested, keep it honest.
 ## Getting set up
 
 ```bash
-npm install
-npm run dev                  # http://localhost:3000 — device-only, no accounts
-npm run preview              # http://localhost:8787 — the real worker: passkeys, sync
+bun install
+bun run dev                  # http://localhost:3000 — device-only, no accounts
+bun run preview              # http://localhost:8787 — the real worker: passkeys, sync
 ```
 
 ## The workflow
@@ -18,11 +18,11 @@ Test-first, and integration-first: a change starts as a failing test of what
 a lifter would see, and the end-to-end suite is the one that proves it.
 
 ```bash
-npm run test:e2e         # Playwright — the whole app against the built worker
-npm run test:integration # the Auth Durable Object on real workerd SQLite
-npm test                 # vitest — engines, store, sync, components
-npm run typecheck        # tsc --noEmit
-npm run lint             # eslint (flat config)
+bun run test:e2e         # Playwright — the whole app against the built worker
+bun run test:integration # the Auth Durable Object on real workerd SQLite
+bun run test             # vitest — engines, store, sync, components
+bun run typecheck        # tsc --noEmit
+bun run lint             # eslint (flat config)
 ```
 
 - **Journeys live in `e2e/`.** Each phone is a browser context with its own
