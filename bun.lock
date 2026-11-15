@@ -1,5 +1,5 @@
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 3,
   "configVersion": 0,
   "workspaces": {
     "": {
@@ -44,6 +44,9 @@
     "workerd",
   ],
   "overrides": {
+    "@node-minify/core": {
+      "glob": "^10.5.0",
+    },
     "postcss": "^8.5.30",
   },
   "packages": {
