@@ -139,6 +139,62 @@ test("a workout split over two days is finished by editing it, missed reps and a
   await expect(await programRow(p.page, "Workout B", "Squat")).toContainText("20kg");
 });
 
+test("editing the latest workout: the weight readout opens, and a corrected weight moves the program", async ({ phone }) => {
+  const p = await phone();
+  await createAccount(p.page, "Isaac");
+  await startNext(p.page);
+  await logReps(p.page, "Squat", [5, 5, 5]);
+  await finish(p.page);
+
+  // Day two: the bar was loaded heavier than logged.
+  await p.page.getByRole("button", { name: /^Edit Workout A from/ }).click();
+  await p.page.getByRole("button", { name: /^Squat details: 5×5 20kg/ }).click();
+  const sheet = p.page.getByRole("dialog", { name: "Squat details" });
+  await expect(sheet.getByText("20kg · empty bar")).toBeVisible();
+  await sheet.getByRole("button", { name: /^Increase weight/ }).click();
+  await expect(sheet.getByText("22.5kg · 1.25kg/side")).toBeVisible();
+  await expect(sheet.getByText(/and to future workouts/)).toBeVisible();
+  await sheet.getByRole("button", { name: "Done" }).click();
+  await expect(p.page.getByRole("button", { name: /^Squat details: 5×5 22.5kg/ })).toBeVisible();
+  // The last two sets, logged at the corrected weight.
+  const plates = exercise(p.page, "Squat").getByRole("button", { name: /reps (target|logged)/ });
+  await plates.nth(3).click();
+  await plates.nth(4).click();
+  await expect(plates.nth(4)).toHaveAccessibleName(/^5 of 5 reps logged/);
+  await saveEdit(p.page);
+
+  // A clean 5×5 at 22.5kg: next time is 25kg.
+  await expect(await programRow(p.page, "Workout B", "Squat")).toContainText("25kg");
+});
+
+test("editing an older workout: its weight is corrected, the program's left alone", async ({ phone }) => {
+  const p = await phone();
+  await createAccount(p.page, "Isaac");
+  await startNext(p.page);
+  await logReps(p.page, "Squat", [5, 5, 5, 5, 5]);
+  await finish(p.page);
+  await startNext(p.page);
+  await logReps(p.page, "Squat", [5, 5, 5, 5, 5]);
+  await finish(p.page);
+  await expect(await programRow(p.page, "Workout A", "Squat")).toContainText("25kg");
+
+  await p.page.getByRole("navigation").getByRole("link", { name: "History" }).click();
+  await p.page.getByRole("button", { name: /^Edit Workout A from/ }).click();
+  await p.page.getByRole("button", { name: /^Squat details: 5×5 20kg/ }).click();
+  const sheet = p.page.getByRole("dialog", { name: "Squat details" });
+  await expect(sheet.getByText("20kg · empty bar")).toBeVisible();
+  await expect(sheet.getByText(/corrects this workout only/)).toBeVisible();
+  await sheet.getByRole("button", { name: /^Increase weight/ }).click();
+  await expect(sheet.getByText("22.5kg · 1.25kg/side")).toBeVisible();
+  await sheet.getByRole("button", { name: "Done" }).click();
+  await saveEdit(p.page);
+
+  await expect(await programRow(p.page, "Workout A", "Squat")).toContainText("25kg");
+  await p.page.getByRole("navigation").getByRole("link", { name: "History" }).click();
+  await p.page.getByRole("button", { name: /^Edit Workout A from/ }).click();
+  await expect(p.page.getByRole("button", { name: /^Squat details: 5×5 22.5kg/ })).toBeVisible();
+});
+
 test("Madcow: Monday's volume day hands over to Wednesday's light day", async ({ phone }) => {
   const p = await phone();
   await createAccount(p.page, "Isaac", "Madcow 5×5");

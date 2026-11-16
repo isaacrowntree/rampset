@@ -10,6 +10,9 @@ import {
   setWorkoutNote,
   saveFinishedWorkout,
   buildEditSession,
+  restampWorkoutWeight,
+  withExerciseWeight,
+  isLatestProgramWorkout,
   workoutSignature,
   type Session,
 } from "@/db/session";
@@ -69,6 +72,11 @@ function WorkoutScreen() {
   /** When this edit was opened: the header clock counts from here, not from
    * the past workout's start days ago. */
   const [editOpenedTs] = useState(() => Date.now());
+  /** Is the workout being edited its program's latest? Only then does a
+   * weight change in the exercise sheet move the program. */
+  const [editIsLatest, setEditIsLatest] = useState(false);
+  /** Weights corrected in this edit, by exercise id. */
+  const editWeights = useRef(new Map<string, number>());
   useWakeLock(session !== null);
 
   // Pull down from the top to minimize, like Now Playing. Editing a past
@@ -101,10 +109,12 @@ function WorkoutScreen() {
         }
         const s = await buildEditSession(past);
         editBaseline.current = await workoutSignature(past.id);
+        const latest = await isLatestProgramWorkout(past);
         const activeId = localStorage.getItem(activeWorkoutKey(user.id));
         const live = activeId && activeId !== past.id ? await db.workouts.get(activeId) : undefined;
         if (cancelled) return;
         setEditRests(!(live && live.endTs === undefined));
+        setEditIsLatest(latest);
         setSession(s);
         return;
       }
@@ -244,8 +254,24 @@ function WorkoutScreen() {
    * sheet) — rebuild targets and warmups in place; logged sets live in the
    * DB and are untouched. */
   const refreshPlan = async () => {
+    if (editId) {
+      // A past workout keeps its own weights: rebuild from its sets, then
+      // re-apply weights corrected on exercises with nothing logged yet.
+      let s = await buildEditSession(session.workout);
+      for (const [exId, kg] of editWeights.current) s = withExerciseWeight(s, exId, kg);
+      setSession((cur) => (cur ? { ...s, workout: cur.workout } : cur));
+      return;
+    }
     const plan = await buildSessionPlan(user.id, session.day.id);
     setSession((s) => (s ? { workout: s.workout, ...plan } : s));
+  };
+
+  /** Edit mode: the exercise sheet corrected the weight this workout was
+   * lifted at. */
+  const editWeight = async (exerciseId: string, kg: number) => {
+    await restampWorkoutWeight(session.workout.id, exerciseId, kg);
+    editWeights.current.set(exerciseId, kg);
+    setSession((s) => (s ? withExerciseWeight(s, exerciseId, kg) : s));
   };
 
   const openNote = () => {
@@ -388,8 +414,7 @@ function WorkoutScreen() {
           session={session}
           onSetDone={rest("up")}
           onProgramChange={() => void refreshPlan()}
-          // A past workout edits its own sets, not the live program.
-          programLocked={editId !== null}
+          edit={editId ? { programWeight: editIsLatest, onWeight: editWeight } : undefined}
         />
       ) : session.mode === "madcow" ? (
         // Ramp checklist: prescribed climb, count down the exercise's rest.

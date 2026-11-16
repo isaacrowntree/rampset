@@ -192,6 +192,40 @@ export async function buildEditSession(workout: Workout): Promise<Session> {
   return { workout, ...plan, exercises };
 }
 
+/** Re-stamp the weight an exercise's logged work sets in a past workout
+ * carry — what History and progression read. Warmups keep theirs. */
+export async function restampWorkoutWeight(
+  workoutId: string,
+  exerciseId: string,
+  weightKg: number,
+): Promise<void> {
+  await db.transaction("rw", db.sets, async () => {
+    const sets = await db.sets.where({ workoutId }).toArray();
+    for (const s of sets) {
+      if (s.exerciseId === exerciseId && !s.isWarmup) await db.sets.update(s.id, { weightKg });
+    }
+  });
+}
+
+/** The session with one exercise's targets (and warmups) at a new weight,
+ * so the sets logged next carry it. */
+export function withExerciseWeight(session: Session, exerciseId: string, weightKg: number): Session {
+  return {
+    ...session,
+    exercises: session.exercises.map((ex) => {
+      if (ex.exercise.id !== exerciseId) return ex;
+      const targets = ex.targets.map((t) => ({ ...t, weightKg }));
+      const warmups =
+        session.mode === "progression" && ex.exercise.kind === "weighted"
+          ? weightKg > 0
+            ? warmupRamp(weightKg, 20, warmupStyle(ex.exercise.name))
+            : []
+          : ex.warmups;
+      return { ...ex, targets, warmups };
+    }),
+  };
+}
+
 /** Create the workout row and return the full session. */
 export async function startWorkout(userId: string, dayId: string): Promise<Session> {
   const plan = await buildSessionPlan(userId, dayId);
@@ -397,19 +431,27 @@ export async function saveFinishedWorkout(workoutId: string): Promise<boolean> {
   const day = await db.programDays.get(workout.programDayId);
   const program = day ? await db.programs.get(day.programId) : undefined;
   if (!program || program.mode !== "progression") return false;
+  if (!(await isLatestProgramWorkout(workout))) return false;
 
+  const sets = await db.sets.where({ workoutId }).toArray();
+  await advanceLinearProgression(program, workout, sets);
+  return true;
+}
+
+/** Is this the latest finished workout of its program? Only that one's
+ * edits may move the program on; an older one is behind newer sessions. */
+export async function isLatestProgramWorkout(workout: Workout): Promise<boolean> {
+  if (!workout.programDayId) return false;
+  const day = await db.programDays.get(workout.programDayId);
+  if (!day) return false;
   const dayIds = new Set(
-    (await db.programDays.where({ programId: program.id }).toArray()).map((d) => d.id),
+    (await db.programDays.where({ programId: day.programId }).toArray()).map((d) => d.id),
   );
   const latest = (await db.workouts.where({ userId: workout.userId }).toArray())
     .filter((w) => w.endTs !== undefined && w.programDayId && dayIds.has(w.programDayId))
     .sort((a, b) => (a.startTs ?? 0) - (b.startTs ?? 0))
     .at(-1);
-  if (latest?.id !== workoutId) return false;
-
-  const sets = await db.sets.where({ workoutId }).toArray();
-  await advanceLinearProgression(program, workout, sets);
-  return true;
+  return latest?.id === workout.id;
 }
 
 /** Program-mode progression for one finished workout: advance (or hold, or

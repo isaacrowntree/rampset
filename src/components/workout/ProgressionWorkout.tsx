@@ -32,14 +32,13 @@ export function ProgressionWorkout({
   session,
   onSetDone,
   onProgramChange,
-  programLocked = false,
+  edit,
 }: {
   session: Session;
   onSetDone: (restSeconds: number) => void;
   onProgramChange: () => void;
-  /** Editing a past workout: the exercise details (which rewrite the live
-   * program) aren't offered. */
-  programLocked?: boolean;
+  /** Editing a past workout. */
+  edit?: EditWeight;
 }) {
   const [tab, setTab] = useState<"workout" | "warmup">("workout");
   // The sheet tracks an id, not a snapshot — after a mid-workout edit
@@ -67,7 +66,7 @@ export function ProgressionWorkout({
         <WorkTab
           session={session}
           onSetDone={onSetDone}
-          onOpenDetail={programLocked ? undefined : (ex) => setDetailId(ex.programExercise.id)}
+          onOpenDetail={(ex) => setDetailId(ex.programExercise.id)}
         />
       ) : (
         <WarmupTab session={session} onSetDone={onSetDone} />
@@ -78,10 +77,19 @@ export function ProgressionWorkout({
           ex={detail}
           onClose={() => setDetailId(null)}
           onProgramChange={onProgramChange}
+          edit={edit}
         />
       )}
     </div>
   );
+}
+
+/** How the exercise sheet's weight works when editing a past workout: it
+ * corrects that workout's sets, and moves the program only when the workout
+ * is the latest — an older one is behind sessions that already set it. */
+export interface EditWeight {
+  programWeight: boolean;
+  onWeight: (exerciseId: string, weightKg: number) => Promise<void>;
 }
 
 /** Optimistic overlay: taps render instantly from local intent while the
@@ -391,10 +399,12 @@ function ExerciseSheet({
   ex,
   onClose,
   onProgramChange,
+  edit,
 }: {
   ex: SessionExercise;
   onClose: () => void;
   onProgramChange: () => void;
+  edit?: EditWeight;
 }) {
   const pe = ex.programExercise;
   const timed = pe.targetSeconds !== undefined;
@@ -407,7 +417,8 @@ function ExerciseSheet({
     sets: pe.sets,
     reps: pe.targetReps ?? 5,
     seconds: pe.targetSeconds ?? 30,
-    weightKg: pe.workingWeightKg ?? 0,
+    // A past workout shows the weight it was lifted at, not today's.
+    weightKg: (edit ? ex.targets[0]?.weightKg : undefined) ?? pe.workingWeightKg ?? 0,
     incrementKg: pe.incrementKg ?? 0,
     deloadPct: pe.deloadPct ?? 0.1,
     deloadAfterFails: pe.deloadAfterFails ?? 3,
@@ -417,6 +428,8 @@ function ExerciseSheet({
   // quick taps only move one step ("sticks"). `apply` is the only writer,
   // and it updates the ref as it goes.
   const draftRef = useRef(draft);
+  // Writes run in order, so the last tap is the one that lands.
+  const writes = useRef(Promise.resolve());
 
   // Exercise cue (form reminder). Persists on blur, then rebuilds the plan so
   // the note shows under the exercise during the workout.
@@ -427,16 +440,21 @@ function ExerciseSheet({
 
   const apply = (patch: (cur: typeof draft) => Partial<typeof draft>) => {
     if (typeof navigator !== "undefined") navigator.vibrate?.(10);
-    const next = { ...draftRef.current, ...patch(draftRef.current) };
+    const prev = draftRef.current;
+    const next = { ...prev, ...patch(prev) };
     draftRef.current = next;
     setDraft(next);
-    void (async () => {
+    const weightChanged = weighted && next.weightKg !== prev.weightKg;
+    // Editing an older workout: its weight is its own, not the program's.
+    const programWeight = !edit || edit.programWeight;
+    writes.current = writes.current.then(async () => {
+      if (edit && weightChanged) await edit.onWeight(ex.exercise.id, next.weightKg);
       await db.programExercises.update(pe.id, {
         sets: next.sets,
         ...(timed ? { targetSeconds: next.seconds } : { targetReps: next.reps }),
         ...(weighted
           ? {
-              workingWeightKg: next.weightKg,
+              ...(programWeight ? { workingWeightKg: next.weightKg } : {}),
               incrementKg: next.incrementKg,
               deloadPct: next.deloadPct,
               deloadAfterFails: next.deloadAfterFails,
@@ -444,7 +462,7 @@ function ExerciseSheet({
           : {}),
       });
       onProgramChange();
-    })();
+    });
   };
 
   const weight = weighted ? draft.weightKg : undefined;
@@ -512,7 +530,9 @@ function ExerciseSheet({
           )}
         </div>
         <p className="mt-2 px-1 text-[12px] leading-relaxed text-ink-faint">
-          Changes apply to this workout, including warmups, and to future workouts.
+          {edit && !edit.programWeight
+            ? "Weight corrects this workout only — newer workouts have set it since. Sets, reps and progression apply to future workouts."
+            : "Changes apply to this workout, including warmups, and to future workouts."}
         </p>
 
         <label className="eyebrow mb-1.5 mt-4 block px-4">Cue</label>

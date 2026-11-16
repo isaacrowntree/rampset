@@ -13,6 +13,9 @@ import {
   finishWorkout,
   saveFinishedWorkout,
   buildEditSession,
+  restampWorkoutWeight,
+  withExerciseWeight,
+  isLatestProgramWorkout,
   setWorkoutNote,
 } from "./session";
 
@@ -458,5 +461,45 @@ describe("buildEditSession", () => {
     const edit = await buildEditSession((await db.workouts.get(s.workout.id))!);
     const sq = edit.exercises.find((e) => e.exercise.id === squat.exercise.id)!;
     expect(sq.targets[4].weightKg).toBe(27.5);
+  });
+});
+
+describe("edit-mode weight", () => {
+  it("re-stamps a workout's logged work sets and its targets, warmups untouched", async () => {
+    const dayB = (await db.programDays.get("day-5x5-b-user-1"))!;
+    const s = await startWorkout(USER1, dayB.id);
+    const squat = s.exercises.find((e) => e.exercise.name === "Squat")!;
+    for (let i = 0; i < 2; i++) {
+      await logSet(s.workout.id, USER1, squat.exercise.id, i, { weightKg: 27.5, reps: 5 });
+    }
+    await logSet(s.workout.id, USER1, squat.exercise.id, 100, { weightKg: 20, reps: 5, isWarmup: true });
+    await finishWorkout(s.workout.id);
+
+    const edit = await buildEditSession((await db.workouts.get(s.workout.id))!);
+    await restampWorkoutWeight(s.workout.id, squat.exercise.id, 40);
+    const next = withExerciseWeight(edit, squat.exercise.id, 40);
+
+    const sets = await db.sets.where({ workoutId: s.workout.id }).toArray();
+    expect(sets.filter((x) => !x.isWarmup).every((x) => x.weightKg === 40)).toBe(true);
+    expect(sets.find((x) => x.isWarmup)?.weightKg).toBe(20);
+    const sq = next.exercises.find((e) => e.exercise.id === squat.exercise.id)!;
+    expect(sq.targets.every((t) => t.weightKg === 40)).toBe(true);
+    expect(sq.warmups.at(-1)!.weightKg).toBeLessThan(40);
+  });
+
+  it("knows whether a workout is its program's latest", async () => {
+    const dayA = (await nextProgramDay(USER1))!;
+    const a = await startWorkout(USER1, dayA.id);
+    await logSet(a.workout.id, USER1, a.exercises[0].exercise.id, 0, { weightKg: 25, reps: 5 });
+    await finishWorkout(a.workout.id);
+    expect(await isLatestProgramWorkout((await db.workouts.get(a.workout.id))!)).toBe(true);
+
+    const dayB = (await nextProgramDay(USER1))!;
+    const b = await startWorkout(USER1, dayB.id);
+    await db.workouts.update(b.workout.id, { startTs: Date.now() + 1000 });
+    await logSet(b.workout.id, USER1, b.exercises[0].exercise.id, 0, { weightKg: 25, reps: 5 });
+    await finishWorkout(b.workout.id);
+    expect(await isLatestProgramWorkout((await db.workouts.get(a.workout.id))!)).toBe(false);
+    expect(await isLatestProgramWorkout((await db.workouts.get(b.workout.id))!)).toBe(true);
   });
 });
